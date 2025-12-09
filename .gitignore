@@ -97,3 +97,6 @@ Desktop.ini
 # Releases folder
 releases/
 
+# Documentation folder
+docs/
+
