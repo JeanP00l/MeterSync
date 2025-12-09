@@ -46,10 +46,19 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
     private val _isLoggingOut = MutableStateFlow(false)
     val isLoggingOut: StateFlow<Boolean> = _isLoggingOut
     
+    private val _showWebView = MutableStateFlow(false)
+    val showWebView: StateFlow<Boolean> = _showWebView
+    
     private var bulkLoadingAddresses: List<Address> = emptyList()
     private var currentBulkAddressIndex = 0
 
     val addresses: Flow<List<Address>> = db.addressDao().getAll()
+    
+    fun getCurrentWebView(): android.webkit.WebView? = currentWebViewManager?.getWebView()
+    
+    fun setShowWebView(show: Boolean) {
+        _showWebView.value = show
+    }
 
     init {
         Logger.init(context)
@@ -224,6 +233,9 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                     Logger.logWebView("Creating WebViewManager on Main thread")
                     val webViewManager = WebViewManager(context, this@MeterViewModel)
                     currentWebViewManager = webViewManager
+                    
+                    // Показываем WebView для отладки
+                    _showWebView.value = true
 
                     // Prepare scripts to execute when page is ready
                     val loginScript = getLoginScript(login, password)
@@ -334,6 +346,7 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 Logger.logError(errorMsg)
                 _error.value = errorMsg
                 _loading.value = false
+                // WebView остается видимым при ошибке для отладки
             } else {
                 Logger.logWebView("Login successful")
             }
@@ -367,6 +380,8 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 
                     // Complete the login process
                     _loading.value = false
+                    // Скрываем WebView после успешного входа
+                    _showWebView.value = false
                     pendingLoginCallback?.let { callback ->
                         Logger.logUI("Executing login success callback")
                         // Execute callback on Main thread to avoid navigation issues
@@ -569,98 +584,332 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 // Специальная функция для работы с React полями (как в вашем примере)
                 async function setReactInputValue(selector, value) {
                     const input = await waitForElement(selector);
-                    const lastValue = input.value;
-                    input.value = value;
-                    const tracker = input._valueTracker;
-                    if (tracker) tracker.setValue(lastValue);
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                    input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    await setReactInputValueForElement(input, value);
+                }
+                
+                // Функция для установки значения в элемент напрямую (для React Hook Form)
+                async function setReactInputValueForElement(input, value) {
+                    console.log("Setting value for input:", {id: input.id, name: input.name, currentValue: input.value, newValue: value});
+                    
+                    // Кликаем на элемент для активации
+                    input.click();
                     await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Фокус на элемент
+                    input.focus();
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    
+                    // Очищаем текущее значение
+                    input.value = '';
+                    
+                    // Устанавливаем новое значение через нативный setter
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+                    if (nativeInputValueSetter) {
+                        nativeInputValueSetter.call(input, value);
+                    } else {
+                        input.value = value;
+                    }
+                    
+                    // Обновляем внутренний трекер React
+                    const tracker = input._valueTracker;
+                    if (tracker) {
+                        tracker.setValue('');
+                    }
+                    
+                    // Создаем события для React Hook Form
+                    // React Hook Form использует onChange события
+                    const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+                    const changeEvent = new Event('change', { bubbles: true, cancelable: true });
+                    
+                    // Используем InputEvent вместо обычного Event (лучше для React)
+                    const inputEventObj = new InputEvent('input', {
+                        bubbles: true,
+                        cancelable: true,
+                        data: value,
+                        inputType: 'insertText',
+                        isComposing: false
+                    });
+                    
+                    input.dispatchEvent(inputEventObj);
+                    input.dispatchEvent(changeEvent);
+                    
+                    // Для React Hook Form нужно вызвать onChange с объектом события
+                    const syntheticEvent = {
+                        target: {
+                            value: value,
+                            name: input.name || input.id,
+                            id: input.id
+                        },
+                        currentTarget: {
+                            value: value,
+                            name: input.name || input.id,
+                            id: input.id
+                        },
+                        bubbles: true,
+                        cancelable: true
+                    };
+                    
+                    // Поиск React Fiber и вызов обработчиков
+                    function findReactFiber(element) {
+                        const keys = Object.keys(element);
+                        for (let key of keys) {
+                            if (key.startsWith('__reactFiber') || 
+                                key.startsWith('__reactInternalInstance') ||
+                                key.startsWith('__reactContainer')) {
+                                return element[key];
+                            }
+                        }
+                        return null;
+                    }
+                    
+                    // Ищем React Fiber и вызываем обработчики
+                    let fiber = findReactFiber(input);
+                    let depth = 0;
+                    while (fiber && depth < 15) {
+                        if (fiber.memoizedProps) {
+                            const props = fiber.memoizedProps;
+                            
+                            // Вызываем onChange если есть
+                            if (props.onChange) {
+                                props.onChange(syntheticEvent);
+                                console.log("Called onChange from React Fiber at depth " + depth);
+                            }
+                            
+                            // Вызываем onInput если есть
+                            if (props.onInput) {
+                                props.onInput(syntheticEvent);
+                                console.log("Called onInput from React Fiber at depth " + depth);
+                            }
+                            
+                            // Если есть register, пробуем его использовать
+                            if (props.register && typeof props.register === 'function') {
+                                try {
+                                    const handlers = props.register(props.name || input.name || input.id);
+                                    if (handlers && handlers.onChange) {
+                                        handlers.onChange(syntheticEvent);
+                                        console.log("Called onChange from register");
+                                    }
+                                } catch (e) {
+                                    console.log("Error using register:", e);
+                                }
+                            }
+                        }
+                        
+                        // Переходим к родительскому компоненту
+                        fiber = fiber.return || fiber._owner;
+                        depth++;
+                    }
+                    
+                    // Проверяем наличие onInput handler напрямую
+                    if (input.oninput) {
+                        input.oninput(syntheticEvent);
+                    }
+                    
+                    // Blur для завершения
+                    input.blur();
+                    
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    
+                    console.log("Value set, final value:", input.value);
                 }
 
                     function findLoginInputs() {
-                        // Use specific selectors for React app
-                        return {
-                            login: document.querySelector('input#login'),
-                            password: document.querySelector('input#Пароль'),
-                            submit: document.querySelector('button._button_1xwkq_1')
-                        };
+                        console.log("=== Finding login inputs ===");
+                        
+                        // Пробуем разные способы поиска
+                        let login = null;
+                        let password = null;
+                        
+                        // Способ 1: По id (если есть)
+                        login = document.querySelector('input#login');
+                        password = document.querySelector('input#Пароль');
+                        
+                        console.log("By ID:", {login: !!login, password: !!password});
+                        
+                        // Способ 2: По name атрибуту
+                        if (!login) {
+                            login = document.querySelector('input[name="login"]');
+                        }
+                        if (!password) {
+                            password = document.querySelector('input[name="password"]') ||
+                                      document.querySelector('input[type="password"]');
+                        }
+                        
+                        console.log("By name:", {login: !!login, password: !!password});
+                        
+                        // Способ 3: По типу и позиции (первый text, первый password)
+                        if (!login) {
+                            const textInputs = Array.from(document.querySelectorAll('input[type="text"]'));
+                            login = textInputs.find(input => 
+                                input.name === 'login' || 
+                                input.id === 'login' ||
+                                (input.getAttribute('data-cursor-ref') && input.closest('div[class*="_inputField"]'))
+                            ) || textInputs[0];
+                        }
+                        
+                        if (!password) {
+                            password = document.querySelector('input[type="password"]');
+                        }
+                        
+                        // Способ 4: Ищем внутри div с классом _inputField_1lul1_31
+                        if (!login || !password) {
+                            const inputFields = document.querySelectorAll('div._inputField_1lul1_31, div[class*="_inputField"]');
+                            inputFields.forEach(field => {
+                                const input = field.querySelector('input');
+                                if (input) {
+                                    if (input.type === 'text' && !login) {
+                                        login = input;
+                                    } else if (input.type === 'password' && !password) {
+                                        password = input;
+                                    }
+                                }
+                            });
+                        }
+                        
+                        console.log("After all methods:", {
+                            login: login ? {id: login.id, name: login.name, type: login.type} : null,
+                            password: password ? {id: password.id, name: password.name, type: password.type} : null
+                        });
+                        
+                        // Ищем кнопку входа
+                        let submit = Array.from(document.querySelectorAll('button')).find(btn => {
+                            const text = btn.textContent?.trim().toLowerCase();
+                            return text === 'вход' || text === 'войти';
+                        }) || document.querySelector('button[type="submit"]');
+                        
+                        console.log("Submit button:", submit ? {text: submit.textContent, type: submit.type} : null);
+                        
+                        return { login, password, submit };
                     }
 
                 async function login() {
                     try {
-                        // Wait a bit for page to fully load
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-
-                        // Detailed logging of page state
                         console.log("=== LOGIN DEBUG INFO ===");
                         console.log("Current URL:", window.location.href);
                         console.log("Page title:", document.title);
                         console.log("Document ready state:", document.readyState);
                         
-                        // Check all input elements on page
-                        const allInputs = document.querySelectorAll('input');
-                        console.log("Total inputs found:", allInputs.length);
-                        allInputs.forEach((input, index) => {
-                            console.log('Input ' + index + ':', {
-                                id: input.id,
-                                name: input.name,
-                                type: input.type,
-                                placeholder: input.placeholder,
-                                className: input.className
-                            });
-                        });
+                        // Ждем появления input элементов напрямую
+                        console.log("Waiting for input elements to appear...");
+                        let loginInput = null;
+                        let passInput = null;
+                        let attempts = 0;
                         
-                        // Check all buttons on page
-                        const allButtons = document.querySelectorAll('button');
-                        console.log("Total buttons found:", allButtons.length);
-                        allButtons.forEach((button, index) => {
-                            console.log('Button ' + index + ':', {
-                                id: button.id,
-                                className: button.className,
-                                textContent: button.textContent?.trim(),
-                                type: button.type
-                            });
-                        });
-
-                        // Test specific selectors
-                        const loginById = document.querySelector('input#login');
-                        const passwordById = document.querySelector('input#Пароль');
-                        const submitByClass = document.querySelector('button._button_1xwkq_1');
+                        while (attempts < 50 && (!loginInput || !passInput)) {
+                            await new Promise(resolve => setTimeout(resolve, 200));
+                            
+                            // Ищем input элементы напрямую
+                            loginInput = document.querySelector('input#login');
+                            passInput = document.querySelector('input#Пароль');
+                            
+                            // Также проверяем по name атрибутам на случай если id не работают
+                            if (!loginInput) {
+                                loginInput = document.querySelector('input[name="login"]');
+                            }
+                            if (!passInput) {
+                                passInput = document.querySelector('input[name="password"]');
+                            }
+                            
+                            attempts++;
+                            if (attempts % 5 === 0) {
+                                console.log('Attempt ' + attempts + ': login=' + !!loginInput + ', password=' + !!passInput);
+                            }
+                        }
                         
-                        console.log("Selector test results:");
-                        console.log("input#login:", loginById ? "FOUND" : "NOT FOUND");
-                        console.log("input#Пароль:", passwordById ? "FOUND" : "NOT FOUND");
-                        console.log("button._button_1xwkq_1:", submitByClass ? "FOUND" : "NOT FOUND");
-                        
-                        // Try alternative selectors
-                        const loginByType = document.querySelector('input[type="text"]');
-                        const passwordByType = document.querySelector('input[type="password"]');
-                        const submitByText = Array.from(document.querySelectorAll('button')).find(btn => 
-                            btn.textContent && btn.textContent.toLowerCase().includes('вход')
-                        );
-                        
-                        console.log("Alternative selectors:");
-                        console.log("input[type='text']:", loginByType ? "FOUND" : "NOT FOUND");
-                        console.log("input[type='password']:", passwordByType ? "FOUND" : "NOT FOUND");
-                        console.log("button with 'вход' text:", submitByText ? "FOUND" : "NOT FOUND");
-
-                        // Find login inputs using specific selectors
-                        const { login: loginInput, password: passInput, submit: submitBtn } = findLoginInputs();
-
-                        if (!loginInput || !passInput || !submitBtn) {
-                            const errorMsg = 'Поля логина не найдены. Login: ' + !!loginInput + ', Password: ' + !!passInput + ', Submit: ' + !!submitBtn;
+                        if (!loginInput || !passInput) {
+                            const errorMsg = 'Поля ввода не найдены после ' + (attempts * 200) + 'ms. Login: ' + !!loginInput + ', Password: ' + !!passInput;
                             console.log("ERROR:", errorMsg);
                             window.Android.onLoginResult("error", errorMsg);
                             return;
                         }
+                        
+                        console.log('Input elements found! Waiting additional 1 second for React to fully initialize...');
+                        // Дополнительное ожидание 1 секунду после появления полей
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // Ищем кнопку отправки
+                        let submitBtn = document.querySelector('button[type="submit"]');
+                        if (!submitBtn) {
+                            // Пробуем альтернативные селекторы для кнопки
+                            submitBtn = document.querySelector('button._button_1xwkq_1');
+                        }
+                        if (!submitBtn) {
+                            // Пробуем найти по тексту
+                            const allButtons = document.querySelectorAll('button');
+                            submitBtn = Array.from(allButtons).find(btn => 
+                                btn.textContent && btn.textContent.toLowerCase().includes('вход')
+                            );
+                        }
+                        
+                        if (!submitBtn) {
+                            const errorMsg = 'Кнопка отправки не найдена';
+                            console.log("ERROR:", errorMsg);
+                            window.Android.onLoginResult("error", errorMsg);
+                            return;
+                        }
+                        
+                        console.log("All elements found:", {
+                            login: {id: loginInput.id, name: loginInput.name, type: loginInput.type},
+                            password: {id: passInput.id, name: passInput.name, type: passInput.type},
+                            submit: {text: submitBtn.textContent}
+                        });
 
                         console.log("All elements found, proceeding with login");
+                        console.log("Login element details:", {
+                            id: loginInput.id,
+                            name: loginInput.name,
+                            type: loginInput.type,
+                            className: loginInput.className,
+                            value: loginInput.value
+                        });
+                        console.log("Password element details:", {
+                            id: passInput.id,
+                            name: passInput.name,
+                            type: passInput.type,
+                            className: passInput.className
+                        });
                         
-                        // Use React input value setting for specific selectors
-                        await setReactInputValue('input#login', "$login");
-                        await setReactInputValue('input#Пароль', "$password");
+                        // Убеждаемся, что элементы кликабельны и активны
+                        console.log("Activating input fields...");
+                        
+                        // Кликаем на контейнер логина, если есть
+                        const loginContainer = loginInput.closest('div._inputContainer_ydbik_41');
+                        if (loginContainer) {
+                            console.log("Clicking on login container...");
+                            loginContainer.click();
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                        }
+                        
+                        // Кликаем непосредственно на input логина несколько раз для активации
+                        console.log("Clicking on login input...");
+                        for (let i = 0; i < 3; i++) {
+                            loginInput.click();
+                            await new Promise(resolve => setTimeout(resolve, 50));
+                        }
+                        
+                        // Используем найденные элементы напрямую, а не через селекторы
+                        console.log("Setting login value...");
+                        await setReactInputValueForElement(loginInput, "$login");
+                        console.log("Login value set, current value:", loginInput.value);
+                        
+                        // Кликаем на контейнер пароля, если есть
+                        const passwordContainer = passInput.closest('div._inputContainer_ydbik_41');
+                        if (passwordContainer) {
+                            console.log("Clicking on password container...");
+                            passwordContainer.click();
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                        }
+                        
+                        // Кликаем непосредственно на input пароля несколько раз для активации
+                        console.log("Clicking on password input...");
+                        for (let i = 0; i < 3; i++) {
+                            passInput.click();
+                            await new Promise(resolve => setTimeout(resolve, 50));
+                        }
+                        
+                        console.log("Setting password value...");
+                        await setReactInputValueForElement(passInput, "$password");
+                        console.log("Password value set");
 
                         // Wait a bit before submitting
                         await new Promise(resolve => setTimeout(resolve, 500));
@@ -729,10 +978,17 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                         const taskItems = container.querySelectorAll('div._taskItem_36r29_38');
                         
                         taskItems.forEach(item => {
-                            const titleElement = item.querySelector('div._taskTitle_36r29_45 span');
+                            // Пробуем разные селекторы для надежности
+                            const titleElement = item.querySelector('div._taskTitle_36r29_45 > span') ||
+                                               item.querySelector('div._taskTitle_36r29_45 span') ||
+                                               item.querySelector('span');
                             if (titleElement) {
                                 const addressText = titleElement.innerText.trim();
-                                if (addressText && addressText.length > 5) {
+                                // Фильтруем валидные адреса
+                                if (addressText && 
+                                    addressText.length > 5 && 
+                                    addressText !== "Без даты" &&
+                                    !addressText.includes('Загрузка')) {
                                     addresses.push(addressText);
                                 }
                             }
@@ -805,7 +1061,8 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                             const titleElement = item.querySelector('div._taskTitle_36r29_45 span');
                             if (titleElement) {
                                 const text = titleElement.innerText.trim();
-                                if (text.includes(TARGET_ADDRESS)) {
+                                // Используем более гибкий поиск (в обе стороны)
+                                if (text.includes(TARGET_ADDRESS) || TARGET_ADDRESS.includes(text)) {
                                     targetItem = item;
                                     break;
                                 }
@@ -817,9 +1074,20 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                             return;
                         }
 
-                        // Кликаем по адресу
-                        targetItem.click();
-                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        // React-совместимый клик (для правильной обработки React событий)
+                        function reactClick(element) {
+                            const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+                            const mouseUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+                            const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+                            element.dispatchEvent(mouseDown);
+                            element.dispatchEvent(mouseUp);
+                            element.dispatchEvent(click);
+                        }
+                        
+                        reactClick(targetItem);
+                        
+                        // Увеличиваем время ожидания для React навигации и рендеринга
+                        await new Promise(resolve => setTimeout(resolve, 2000));
 
                         // Ждем появления контейнера со счетчиками
                         const metersContainer = await waitForElement('div._tasksContainer_36r29_11', 15000);

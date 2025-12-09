@@ -1,11 +1,14 @@
 package com.metersync.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -15,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,8 +28,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.metersync.utils.Logger
 import com.metersync.viewmodel.MeterViewModel
@@ -47,6 +55,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
     val error by vm.error.collectAsState()
     val addresses = vm.addresses.collectAsState(initial = emptyList())
     val isLoggingOut by vm.isLoggingOut.collectAsState()
+    val showWebView by vm.showWebView.collectAsState()
 
     // Загружаем статистику счетчиков
     LaunchedEffect(addresses.value.size) {
@@ -227,6 +236,109 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
                     }
                 }
             )
+        }
+        
+        // Диалог с WebView для отладки процесса входа
+        if (showWebView) {
+            val webView = vm.getCurrentWebView()
+            
+            Dialog(
+                onDismissRequest = { 
+                    vm.setShowWebView(false)
+                },
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = false
+                )
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        // Заголовок и кнопка закрытия
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Процесс входа (WebView)",
+                                fontSize = 18.sp,
+                                color = Color.Black
+                            )
+                            Button(
+                                onClick = { 
+                                    vm.setShowWebView(false)
+                                }
+                            ) {
+                                Text("Закрыть")
+                            }
+                        }
+                        
+                        // WebView
+                        if (webView != null) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    // Создаем контейнер и добавляем существующий WebView
+                                    val container = android.widget.FrameLayout(ctx)
+                                    container.layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    )
+                                    
+                                    // Удаляем WebView из старого родителя, если есть
+                                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                                    
+                                    // Устанавливаем параметры для WebView
+                                    webView.layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    )
+                                    
+                                    container.addView(webView)
+                                    container
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                update = { container ->
+                                    // Обновляем при изменении
+                                    val currentWebView = vm.getCurrentWebView()
+                                    if (currentWebView != null && currentWebView.parent != container) {
+                                        (currentWebView.parent as? android.view.ViewGroup)?.removeView(currentWebView)
+                                        container.removeAllViews()
+                                        container.addView(currentWebView)
+                                    }
+                                }
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    CircularProgressIndicator()
+                                    Text(
+                                        "WebView загружается...",
+                                        modifier = Modifier.padding(top = 16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 }
 

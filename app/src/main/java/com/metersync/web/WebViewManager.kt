@@ -89,6 +89,8 @@ class WebViewManager(context: Context, private val listener: Listener) {
         }
     }
 
+    fun getWebView(): WebView = webView
+
     fun loadUrl(url: String) {
         Logger.logWebView("Loading URL: $url")
         try {
