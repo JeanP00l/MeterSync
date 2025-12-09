@@ -92,6 +92,51 @@ class WebViewManager(context: Context, private val listener: Listener) {
     fun getWebView(): WebView = webView
     
     /**
+     * Проверяет, авторизован ли пользователь (находится ли на странице со списком адресов)
+     */
+    fun checkIfAuthorized(callback: (Boolean) -> Unit) {
+        Logger.logWebView("Checking if user is authorized")
+        webView.evaluateJavascript("""
+            (function() {
+                // Проверяем наличие контейнера с адресами
+                const addressContainer = document.querySelector('div._dateTasks_36r29_18');
+                // Проверяем отсутствие полей входа
+                const loginInput = document.querySelector('input#login') || document.querySelector('input[name="login"]');
+                return !loginInput && !!addressContainer;
+            })();
+        """.trimIndent()) { result ->
+            val isAuthorized = result == "true"
+            Logger.logWebView("Authorization check result: $isAuthorized")
+            callback(isAuthorized)
+        }
+    }
+    
+    /**
+     * Возвращается назад к списку адресов (использует history.back())
+     */
+    fun navigateBackToAddressList(callback: (() -> Unit)? = null) {
+        Logger.logWebView("Navigating back to address list")
+        webView.evaluateJavascript("""
+            (function() {
+                if (window.history.length > 1) {
+                    window.history.back();
+                    return 'navigating_back';
+                } else {
+                    // Если нет истории, перезагружаем страницу
+                    window.location.href = 'https://meter.printecs.com/';
+                    return 'reloading';
+                }
+            })();
+        """.trimIndent()) { result ->
+            Logger.logWebView("Navigation result: $result")
+            // Даем время на навигацию (уменьшено для ускорения)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                callback?.invoke()
+            }, 800) // Уменьшено с 1500ms до 800ms
+        }
+    }
+    
+    /**
      * Полностью уничтожает WebView и освобождает все ресурсы
      */
     fun destroy() {

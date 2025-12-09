@@ -7,8 +7,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.metersync.ui.getColorScheme
+import com.metersync.ui.ThemeManager
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.delay
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -103,16 +112,42 @@ class MainActivity : ComponentActivity() {
     private fun setupUI() {
         setContent {
             Logger.logUI("MainActivity setContent")
-            Surface(color = MaterialTheme.colorScheme.background) {
-                val navController = rememberNavController()
-                Logger.logUI("Navigation controller created")
+            
+            // Управление темой - используем состояние для автоматического обновления
+            val context = LocalContext.current
+            var isDarkTheme by remember { mutableStateOf(ThemeManager.isDarkTheme(context)) }
+            
+            // Периодически проверяем изменения темы для синхронизации
+            LaunchedEffect(Unit) {
+                while (true) {
+                    delay(100) // Проверяем каждые 100ms
+                    val currentTheme = ThemeManager.isDarkTheme(context)
+                    if (currentTheme != isDarkTheme) {
+                        isDarkTheme = currentTheme
+                    }
+                }
+            }
+            
+            val colorScheme = getColorScheme(isDarkTheme)
+            
+            // Используем ключ для перекомпозиции при изменении темы
+            androidx.compose.runtime.key(isDarkTheme) {
+                MaterialTheme(
+                    colorScheme = colorScheme,
+                    content = {
+                        Surface(color = MaterialTheme.colorScheme.background) {
+                            val navController = rememberNavController()
+                            Logger.logUI("Navigation controller created")
 
-                MainScreen(
-                    navController = navController, 
-                    cameraLauncher = cameraLauncher,
-                    onCameraDataReady = { uri, meterInfo ->
-                        currentTempUri = uri
-                        currentMeterInfo = meterInfo
+                            MainScreen(
+                                navController = navController, 
+                                cameraLauncher = cameraLauncher,
+                                onCameraDataReady = { uri, meterInfo ->
+                                    currentTempUri = uri
+                                    currentMeterInfo = meterInfo
+                                }
+                            )
+                        }
                     }
                 )
             }

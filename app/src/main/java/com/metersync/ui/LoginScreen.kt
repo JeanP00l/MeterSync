@@ -15,6 +15,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,11 +75,20 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
 
     Logger.logUI("LoginScreen composed")
 
+    // Управление темой
+    val (isDarkTheme, setDarkTheme) = rememberThemeState()
+    
     Column(
         modifier = Modifier.fillMaxSize().padding(PaddingValues(16.dp)),
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Основной контент
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         // Чекбокс для управления логированием
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -209,6 +219,26 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
                     color = Color(0xFF95CAB4)
                 )
             }
+        }
+        } // Закрываем внутренний Column с основным контентом
+        
+        // Переключатель темы внизу экрана
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Темная тема",
+                modifier = Modifier.padding(end = 8.dp),
+                fontSize = 14.sp
+            )
+            Switch(
+                checked = isDarkTheme,
+                onCheckedChange = setDarkTheme
+            )
         }
 
         // Диалог подтверждения очистки кэша

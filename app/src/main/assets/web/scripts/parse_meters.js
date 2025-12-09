@@ -1,8 +1,8 @@
 (function() {
     const TARGET_ADDRESS = "__TARGET_ADDRESS__";
 
-    // Улучшенная функция ожидания элемента для React
-    function waitForElement(selector, timeout = 15000) {
+    // Улучшенная функция ожидания элемента для React (оптимизированная)
+    function waitForElement(selector, timeout = 10000) {
         return new Promise((resolve, reject) => {
             const start = Date.now();
             const interval = setInterval(() => {
@@ -14,7 +14,7 @@
                     clearInterval(interval);
                     reject(new Error("Timeout: " + selector));
                 }
-            }, 400);
+            }, 200); // Увеличена частота проверок с 400ms до 200ms
         });
     }
 
@@ -32,9 +32,10 @@
 
     async function goToAddressAndParse() {
         try {
-            // Ждем загрузки страницы с адресами
-            await waitForElement('div._dateTasks_36r29_18', 15000);
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Оптимизированное ожидание загрузки списка адресов
+            await waitForElement('div._dateTasks_36r29_18', 8000);
+            // Минимальная задержка для инициализации React
+            await new Promise(resolve => setTimeout(resolve, 200)); // Уменьшено с 300ms до 200ms
 
             // Находим адрес в списке (используем includes вместо точного сравнения)
             const items = document.querySelectorAll('div._taskItem_36r29_38');
@@ -60,18 +61,24 @@
             // Используем React-совместимый клик
             reactClick(targetItem);
             
-            // Ждем навигации React и загрузки счетчиков
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            // Ждем появления контейнера со счетчиками
-            const metersContainer = await waitForElement('div._tasksContainer_36r29_11', 15000);
+            // Оптимизированное ожидание: ждем появления контейнера со счетчиками
+            // Вместо фиксированной задержки используем умное ожидание
+            const metersContainer = await waitForElement('div._tasksContainer_36r29_11', 10000);
             
             if (!metersContainer) {
                 throw new Error("Контейнер счетчиков не найден");
             }
 
-            // Дополнительное ожидание для полной загрузки React компонентов
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Ждем появления хотя бы одного счетчика - более агрессивная проверка
+            let attempts = 0;
+            while (attempts < 15) { // Уменьшено с 20 до 15 попыток
+                const meterItems = metersContainer.querySelectorAll('div._taskItem_36r29_38');
+                if (meterItems.length > 0) {
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 80)); // Уменьшено с 100ms до 80ms
+                attempts++;
+            }
 
             // Извлекаем данные о счетчиках
             const meters = [];

@@ -110,7 +110,7 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 bulkLoadingAddresses = db.addressDao().getAll().first()
                 currentBulkAddressIndex = 0
                 
-                Logger.logDatabase("Loading meters for ${bulkLoadingAddresses.size} addresses")
+                Logger.logDatabase("Loading meters for ${bulkLoadingAddresses.size} addresses (updating all, including existing)")
                 
                 // Загружаем первый адрес
                 loadNextBulkAddress()
@@ -123,6 +123,37 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
         }
     }
 
+    /**
+     * Загружает счетчики для конкретного адреса (оптимизированная версия)
+     */
+    private fun loadMetersForAddress(webViewManager: WebViewManager, address: Address) {
+        Logger.logWebView("Loading meters for address: ${address.fullAddress}")
+        val metersScript = getMetersParsingScript(address.fullAddress)
+        pendingMetersScript = metersScript
+        
+        // Быстрая проверка: находимся ли мы на странице со списком адресов
+        webViewManager.evaluateJs("""
+            (function() {
+                const addressContainer = document.querySelector('div._dateTasks_36r29_18');
+                return !!addressContainer;
+            })();
+        """.trimIndent()) { result ->
+            if (result == "false") {
+                // Не на странице со списком, возвращаемся назад
+                webViewManager.navigateBackToAddressList {
+                    // После возврата запускаем скрипт с минимальной задержкой
+                    viewModelScope.launch(Dispatchers.Main) {
+                        kotlinx.coroutines.delay(300) // Уменьшено с 1000ms до 300ms
+                        webViewManager.evaluateJs(metersScript)
+                    }
+                }
+            } else {
+                // Уже на странице со списком, запускаем скрипт сразу
+                webViewManager.evaluateJs(metersScript)
+            }
+        }
+    }
+    
     private fun loadNextBulkAddress() {
         if (currentBulkAddressIndex >= bulkLoadingAddresses.size) {
             // Все адреса загружены
@@ -132,16 +163,45 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
         }
         
         val address = bulkLoadingAddresses[currentBulkAddressIndex]
-        Logger.logDatabase("Loading meters for address: ${address.fullAddress}")
+        Logger.logDatabase("Loading meters for address: ${address.fullAddress} (${currentBulkAddressIndex + 1}/${bulkLoadingAddresses.size})")
         
         viewModelScope.launch(Dispatchers.Main) {
-            val webViewManager = WebViewManager(context, this@MeterViewModel)
-            currentWebViewManager = webViewManager
+            // Переиспользуем существующий WebView или создаем новый только при первом адресе
+            val webViewManager = currentWebViewManager ?: run {
+                Logger.logWebView("Creating new WebViewManager for bulk loading")
+                WebViewManager(context, this@MeterViewModel).also {
+                    currentWebViewManager = it
+                }
+            }
             
-            val metersScript = getMetersParsingScript(address.fullAddress)
-            pendingMetersScript = metersScript
-            
-            webViewManager.loadUrl("https://meter.printecs.com/")
+            // При массовой загрузке проверяем авторизацию только при первом адресе
+            val isFirstAddress = currentBulkAddressIndex == 0
+            if (isFirstAddress) {
+                // Проверяем авторизацию только при первом адресе
+                webViewManager.checkIfAuthorized { isAuthorized ->
+                    if (isAuthorized) {
+                        loadMetersForAddress(webViewManager, address)
+                    } else {
+                        // Не авторизованы, нужно войти сначала
+                        Logger.logWebView("Not authorized, need to login first")
+                        val (login, password) = credentialStore.get()
+                        if (!login.isNullOrEmpty() && !password.isNullOrEmpty()) {
+                            val loginScript = getLoginScript(login, password)
+                            val metersScript = getMetersParsingScript(address.fullAddress)
+                            pendingLoginScript = loginScript
+                            pendingMetersScript = metersScript
+                            webViewManager.loadUrl("https://meter.printecs.com/")
+                        } else {
+                            Logger.logError("Credentials not found for bulk loading")
+                            _error.value = "Учетные данные не найдены"
+                            _bulkLoading.value = false
+                        }
+                    }
+                }
+            } else {
+                // Для последующих адресов считаем, что уже авторизованы
+                loadMetersForAddress(webViewManager, address)
+            }
         }
     }
 
@@ -532,10 +592,24 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                     pendingMetersCallback = null
                 }
                 
-                // Если идет массовая загрузка, переходим к следующему адресу
+                // Если идет массовая загрузка, возвращаемся к списку адресов и переходим к следующему
                 if (_bulkLoading.value) {
                     currentBulkAddressIndex++
-                    loadNextBulkAddress()
+                    // Возвращаемся назад к списку адресов вместо перезагрузки страницы
+                    withContext(Dispatchers.Main) {
+                        currentWebViewManager?.let { webViewManager ->
+                            webViewManager.navigateBackToAddressList {
+                                // После возврата к списку загружаем следующий адрес
+                                viewModelScope.launch(Dispatchers.Main) {
+                                    kotlinx.coroutines.delay(200) // Уменьшено с 500ms до 200ms
+                                    loadNextBulkAddress()
+                                }
+                            }
+                        } ?: run {
+                            // Если WebView был уничтожен, создаем новый
+                            loadNextBulkAddress()
+                        }
+                    }
                 }
                 
             } catch (e: Exception) {
@@ -555,7 +629,18 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 // Если идет массовая загрузка, переходим к следующему адресу даже при ошибке
                 if (_bulkLoading.value) {
                     currentBulkAddressIndex++
-                    loadNextBulkAddress()
+                    withContext(Dispatchers.Main) {
+                        currentWebViewManager?.let { webViewManager ->
+                            webViewManager.navigateBackToAddressList {
+                                viewModelScope.launch(Dispatchers.Main) {
+                                    kotlinx.coroutines.delay(200) // Уменьшено с 500ms до 200ms
+                                    loadNextBulkAddress()
+                                }
+                            }
+                        } ?: run {
+                            loadNextBulkAddress()
+                        }
+                    }
                 }
             }
         }
@@ -1082,7 +1167,7 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
             (function() {
                 const TARGET_ADDRESS = "$targetAddress";
 
-                function waitForElement(selector, timeout = 15000) {
+                function waitForElement(selector, timeout = 10000) {
                     return new Promise((resolve, reject) => {
                         const start = Date.now();
                         const interval = setInterval(() => {
@@ -1094,14 +1179,16 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                                 clearInterval(interval);
                                 reject(new Error("Timeout: " + selector));
                             }
-                        }, 400);
+                        }, 200); // Увеличена частота проверок с 400ms до 200ms
                     });
                 }
 
                 async function goToAddressAndParse() {
                     try {
-                        // Ждем загрузки страницы
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        // Оптимизированное ожидание загрузки списка адресов
+                        await waitForElement('div._dateTasks_36r29_18', 8000);
+                        // Минимальная задержка для инициализации React
+                        await new Promise(resolve => setTimeout(resolve, 200)); // Уменьшено с 300ms до 200ms
 
                         // Находим адрес в списке и кликаем по нему
                         const addressItems = document.querySelectorAll('div._taskItem_36r29_38');
@@ -1136,19 +1223,25 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                         
                         reactClick(targetItem);
                         
-                        // Увеличиваем время ожидания для React навигации и рендеринга
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-
-                        // Ждем появления контейнера со счетчиками
-                        const metersContainer = await waitForElement('div._tasksContainer_36r29_11', 15000);
+                        // Оптимизированное ожидание: ждем появления контейнера со счетчиками
+                        // Вместо фиксированной задержки используем умное ожидание
+                        const metersContainer = await waitForElement('div._tasksContainer_36r29_11', 10000);
                         
                         if (!metersContainer) {
                             window.Android.onMetersParsed("error:Контейнер счетчиков не найден");
                             return;
                         }
 
-                        // Ждем еще немного для полной загрузки
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        // Ждем появления хотя бы одного счетчика - более агрессивная проверка
+                        let attempts = 0;
+                        while (attempts < 15) { // Уменьшено с 20 до 15 попыток
+                            const meterItems = metersContainer.querySelectorAll('div._taskItem_36r29_38');
+                            if (meterItems.length > 0) {
+                                break;
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 80)); // Уменьшено с 100ms до 80ms
+                            attempts++;
+                        }
 
                         // Извлекаем данные о счетчиках
                         const meters = [];
