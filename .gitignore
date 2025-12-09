@@ -94,3 +94,6 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# Releases folder
+releases/
+
