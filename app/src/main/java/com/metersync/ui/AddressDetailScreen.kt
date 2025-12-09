@@ -51,6 +51,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Checkbox
 
 enum class MeterFilter {
     ALL,           // Все счетчики
@@ -64,7 +65,7 @@ fun AddressDetailScreen(
     addressId: Long, 
     onBack: () -> Unit, 
     cameraLauncher: androidx.activity.result.ActivityResultLauncher<Intent>?,
-    onCameraDataReady: (Uri, String) -> Unit,
+    onCameraDataReady: (Uri, String, java.io.File) -> Unit,
     vm: MeterViewModel = viewModel()
 ) {
     val addresses = vm.addresses.collectAsState(initial = emptyList())
@@ -256,19 +257,23 @@ fun AddressDetailScreen(
                                 apartment = meter.apartment,
                                 meterNumber = meter.meterNumber,
                                 status = meter.status,
+                                isPhotographed = meter.isPhotographed,
                                 onCameraClick = {
                                     if (checkCameraPermissions()) {
                                         // Создаем временный URI для изображения
-                                        val tempUri = cameraManager.createTempImageUri()
+                                        val (tempUri, tempFile) = cameraManager.createTempImageUri()
                                         val meterInfo = "${meter.apartment}      №${meter.meterNumber}"
                                         
-                                        // Передаем данные в MainActivity
-                                        onCameraDataReady(tempUri, meterInfo)
+                                        // Передаем данные в MainActivity (URI и путь к файлу)
+                                        onCameraDataReady(tempUri, meterInfo, tempFile)
                                         
                                         // Создаем Intent для камеры
                                         val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
                                             putExtra(MediaStore.EXTRA_OUTPUT, tempUri)
                                         }
+                                        
+                                        // Устанавливаем чекбокс при нажатии на камеру
+                                        vm.updateMeterPhotographed(meter.id, true)
                                         
                                         // Запускаем камеру через MainActivity
                                         cameraLauncher?.launch(cameraIntent)
@@ -276,6 +281,9 @@ fun AddressDetailScreen(
                                         // Показываем диалог о необходимости разрешений
                                         showPermissionDialog = true
                                     }
+                                },
+                                onCheckboxChange = { checked ->
+                                    vm.updateMeterPhotographed(meter.id, checked)
                                 }
                             )
                         }
@@ -302,7 +310,14 @@ fun AddressDetailScreen(
 }
 
 @Composable
-fun MeterItem(apartment: String, meterNumber: String, status: MeterStatus, onCameraClick: () -> Unit) {
+fun MeterItem(
+    apartment: String, 
+    meterNumber: String, 
+    status: MeterStatus, 
+    isPhotographed: Boolean,
+    onCameraClick: () -> Unit,
+    onCheckboxChange: (Boolean) -> Unit
+) {
     // Определяем цвет номера счетчика в зависимости от статуса
     val meterColor = when (status) {
         MeterStatus.LOADED -> Color(0xFF2E7D32) // Темно-зеленый для загруженных
@@ -333,15 +348,29 @@ fun MeterItem(apartment: String, meterNumber: String, status: MeterStatus, onCam
             )
         }
         
-        // Кнопка камеры
-        Button(
-            onClick = onCameraClick,
-            modifier = Modifier.size(40.dp)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "📷",
-                fontSize = 16.sp
+            // Чекбокс для отслеживания фотографирования
+            Checkbox(
+                checked = isPhotographed,
+                onCheckedChange = onCheckboxChange
             )
+            
+            // Кнопка камеры
+            Button(
+                onClick = onCameraClick,
+                modifier = Modifier.size(40.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF9C27B0) // Фиолетовый цвет
+                )
+            ) {
+                Text(
+                    text = "📷",
+                    fontSize = 16.sp
+                )
+            }
         }
     }
 

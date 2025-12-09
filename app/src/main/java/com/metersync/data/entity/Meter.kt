@@ -10,7 +10,8 @@ data class Meter(
     val apartment: String,
     val meterNumber: String,
     val loadedAt: Long = System.currentTimeMillis(),
-    val status: MeterStatus = MeterStatus.NOT_CHECKED
+    val status: MeterStatus = MeterStatus.NOT_CHECKED,
+    val isPhotographed: Boolean = false
 )
 
 enum class MeterStatus {

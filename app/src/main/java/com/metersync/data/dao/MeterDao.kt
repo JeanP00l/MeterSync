@@ -46,6 +46,10 @@ interface MeterDao {
     // Обновление статуса счетчика
     @Query("UPDATE meters SET status = :status WHERE id = :meterId")
     suspend fun updateMeterStatus(meterId: Long, status: MeterStatus)
+    
+    // Обновление флага фотографирования счетчика
+    @Query("UPDATE meters SET isPhotographed = :isPhotographed WHERE id = :meterId")
+    suspend fun updateMeterPhotographed(meterId: Long, isPhotographed: Boolean)
 }
 
 

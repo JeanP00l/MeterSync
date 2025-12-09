@@ -89,6 +89,13 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
     suspend fun updateMeterStatus(meterId: Long, status: com.metersync.data.entity.MeterStatus) {
         db.meterDao().updateMeterStatus(meterId, status)
     }
+    
+    // Обновление флага фотографирования счетчика
+    fun updateMeterPhotographed(meterId: Long, isPhotographed: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.meterDao().updateMeterPhotographed(meterId, isPhotographed)
+        }
+    }
 
     fun saveCredentials(login: String, password: String) {
         Logger.log("Saving credentials for user: $login", "CREDENTIALS")
@@ -128,6 +135,13 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
      */
     private fun loadMetersForAddress(webViewManager: WebViewManager, address: Address) {
         Logger.logWebView("Loading meters for address: ${address.fullAddress}")
+        
+        // Возобновляем WebView перед загрузкой (если был приостановлен)
+        if (webViewManager.isSuspended()) {
+            webViewManager.resume()
+            Logger.logWebView("WebView resumed for loading meters")
+        }
+        
         val metersScript = getMetersParsingScript(address.fullAddress)
         pendingMetersScript = metersScript
         
@@ -159,6 +173,12 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
             // Все адреса загружены
             _bulkLoading.value = false
             Logger.log("loadAllMeters completed", "MAIN")
+            
+            // Приостанавливаем WebView после завершения массовой загрузки
+            viewModelScope.launch(Dispatchers.Main) {
+                currentWebViewManager?.suspend()
+                Logger.logWebView("WebView suspended after bulk loading completed")
+            }
             return
         }
         
@@ -238,6 +258,35 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                         currentWebViewManager?.let { webViewManager ->
                             try {
                                 Logger.logWebView("Attempting UI logout before destroying WebView")
+                                
+                                // КРИТИЧЕСКИ ВАЖНО: Если WebView приостановлен, возобновляем его
+                                if (webViewManager.isSuspended()) {
+                                    Logger.logWebView("WebView is suspended, resuming for logout")
+                                    webViewManager.resume()
+                                    // Даем время на возобновление
+                                    kotlinx.coroutines.delay(500)
+                                }
+                                
+                                // Если WebView на пустой странице, загружаем главную страницу
+                                webViewManager.getWebView().url?.let { currentUrl ->
+                                    if (currentUrl == "about:blank" || currentUrl.isEmpty()) {
+                                        Logger.logWebView("WebView is on blank page, loading main page for logout")
+                                        webViewManager.loadUrl("https://meter.printecs.com/")
+                                        // Даем больше времени на полную загрузку страницы (5 секунд)
+                                        // Это важно, так как страница должна полностью загрузиться перед попыткой выхода
+                                        kotlinx.coroutines.delay(5000)
+                                    } else {
+                                        // Если уже на странице, даем время на полную загрузку DOM
+                                        Logger.logWebView("WebView is on page: $currentUrl, waiting for DOM to be ready")
+                                        kotlinx.coroutines.delay(3000)
+                                    }
+                                } ?: run {
+                                    // Если URL неизвестен, загружаем главную страницу
+                                    Logger.logWebView("WebView URL is null, loading main page for logout")
+                                    webViewManager.loadUrl("https://meter.printecs.com/")
+                                    kotlinx.coroutines.delay(5000)
+                                }
+                                
                                 // Пытаемся выйти через UI - это завершит сессию на сервере
                                 webViewManager.clearCacheAndReturnToLogin()
                                 // Даем время на выполнение выхода через UI (серия кликов и ожиданий)
@@ -287,6 +336,15 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                         val loginUrl = "https://meter.printecs.com/?_t=${System.currentTimeMillis()}"
                         Logger.logWebView("Loading login page: $loginUrl")
                         newWebViewManager.loadUrl(loginUrl)
+                        
+                        // Даем больше времени на загрузку страницы входа (5 секунд для полной загрузки DOM)
+                        // Это важно, так как после очистки кэша страница может загружаться дольше
+                        kotlinx.coroutines.delay(5000)
+                        
+                        // Сбрасываем состояние ошибки после очистки кэша
+                        _error.value = null
+                        // Сбрасываем состояние загрузки
+                        _loading.value = false
 
                         Logger.logWebView("WebView restored to clean state and login page loaded successfully")
                     } catch (e: Exception) {
@@ -339,11 +397,22 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 // Switch to Main thread for WebView creation
                 withContext(Dispatchers.Main) {
                     Logger.logWebView("Creating WebViewManager on Main thread")
-                    val webViewManager = WebViewManager(context, this@MeterViewModel)
-                    currentWebViewManager = webViewManager
                     
-                    // Показываем WebView для отладки
-                    _showWebView.value = true
+                    // Если WebView уже существует и приостановлен, возобновляем его
+                    val webViewManager = currentWebViewManager?.let {
+                        if (it.isSuspended()) {
+                            Logger.logWebView("Resuming existing WebView")
+                            it.resume()
+                        }
+                        it
+                    } ?: run {
+                        WebViewManager(context, this@MeterViewModel).also {
+                            currentWebViewManager = it
+                        }
+                    }
+                    
+                    // WebView показывается только если пользователь включил чекбокс "Показать WebView"
+                    // Не показываем автоматически
 
                     // Prepare scripts to execute when page is ready
                     val loginScript = getLoginScript(login, password)
@@ -385,8 +454,19 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 // Switch to Main thread for WebView creation
                 withContext(Dispatchers.Main) {
                     Logger.logWebView("Creating WebViewManager for meters on Main thread")
-                    val webViewManager = WebViewManager(context, this@MeterViewModel)
-                    currentWebViewManager = webViewManager
+                    
+                    // Если WebView уже существует и приостановлен, возобновляем его
+                    val webViewManager = currentWebViewManager?.let {
+                        if (it.isSuspended()) {
+                            Logger.logWebView("Resuming existing WebView for meters refresh")
+                            it.resume()
+                        }
+                        it
+                    } ?: run {
+                        WebViewManager(context, this@MeterViewModel).also {
+                            currentWebViewManager = it
+                        }
+                    }
                     
                     // Prepare meters script to execute when page is ready
                     val metersScript = getMetersParsingScript(targetAddress)
@@ -492,6 +572,13 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                     _loading.value = false
                     // Скрываем WebView после успешного входа
                     _showWebView.value = false
+                    
+                    // Приостанавливаем WebView для экономии энергии
+                    withContext(Dispatchers.Main) {
+                        currentWebViewManager?.suspend()
+                        Logger.logWebView("WebView suspended after addresses loaded")
+                    }
+                    
                     pendingLoginCallback?.let { callback ->
                         Logger.logUI("Executing login success callback")
                         // Execute callback on Main thread to avoid navigation issues
@@ -582,6 +669,14 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 
                 Logger.logDatabase("Setting loading to false")
                 _loading.value = false
+                
+                // Приостанавливаем WebView после загрузки счетчиков (если не идет массовая загрузка)
+                if (!_bulkLoading.value) {
+                    withContext(Dispatchers.Main) {
+                        currentWebViewManager?.suspend()
+                        Logger.logWebView("WebView suspended after meters loaded")
+                    }
+                }
                 
                 // Execute callback after meters are saved
                 pendingMetersCallback?.let { callback ->

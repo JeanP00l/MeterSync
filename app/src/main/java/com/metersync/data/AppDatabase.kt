@@ -13,7 +13,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.metersync.data.entity.MeterStatus
 
-@Database(entities = [Address::class, Meter::class], version = 2, exportSchema = false)
+@Database(entities = [Address::class, Meter::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun addressDao(): AddressDao
     abstract fun meterDao(): MeterDao
@@ -27,13 +27,20 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE meters ADD COLUMN status TEXT NOT NULL DEFAULT 'NOT_CHECKED'")
             }
         }
+        
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Добавляем колонку isPhotographed в таблицу meters
+                database.execSQL("ALTER TABLE meters ADD COLUMN isPhotographed INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun get(context: Context): AppDatabase = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "metersync.db"
-            ).addMigrations(MIGRATION_1_2).build().also { INSTANCE = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { INSTANCE = it }
         }
     }
 }
