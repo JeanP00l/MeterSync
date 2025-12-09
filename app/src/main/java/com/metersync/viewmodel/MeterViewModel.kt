@@ -255,6 +255,7 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                     try {
                         // Шаг 1: Сначала пытаемся выйти через UI (если WebView еще существует)
                         // Это важно - нужно завершить сессию на сервере ПЕРЕД уничтожением WebView
+                        // Скрипт clearCacheAndReturnToLogin() сам загрузит страницу профиля и выполнит выход
                         currentWebViewManager?.let { webViewManager ->
                             try {
                                 Logger.logWebView("Attempting UI logout before destroying WebView")
@@ -267,30 +268,20 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                                     kotlinx.coroutines.delay(500)
                                 }
                                 
-                                // Если WebView на пустой странице, загружаем главную страницу
-                                webViewManager.getWebView().url?.let { currentUrl ->
-                                    if (currentUrl == "about:blank" || currentUrl.isEmpty()) {
-                                        Logger.logWebView("WebView is on blank page, loading main page for logout")
-                                        webViewManager.loadUrl("https://meter.printecs.com/")
-                                        // Даем больше времени на полную загрузку страницы (5 секунд)
-                                        // Это важно, так как страница должна полностью загрузиться перед попыткой выхода
-                                        kotlinx.coroutines.delay(5000)
-                                    } else {
-                                        // Если уже на странице, даем время на полную загрузку DOM
-                                        Logger.logWebView("WebView is on page: $currentUrl, waiting for DOM to be ready")
-                                        kotlinx.coroutines.delay(3000)
-                                    }
-                                } ?: run {
-                                    // Если URL неизвестен, загружаем главную страницу
-                                    Logger.logWebView("WebView URL is null, loading main page for logout")
-                                    webViewManager.loadUrl("https://meter.printecs.com/")
-                                    kotlinx.coroutines.delay(5000)
-                                }
-                                
-                                // Пытаемся выйти через UI - это завершит сессию на сервере
+                                // Пытаемся выйти через UI - скрипт сам загрузит страницу профиля и выполнит выход
+                                // Скрипт выполняет: загрузка профиля -> ожидание DOM -> клик "Выход" -> ожидание 2 сек -> клик "Выйти" -> ожидание 2 сек -> ожидание редиректа
                                 webViewManager.clearCacheAndReturnToLogin()
-                                // Даем время на выполнение выхода через UI (серия кликов и ожиданий)
-                                kotlinx.coroutines.delay(5000)
+                                
+                                // Даем больше времени на выполнение выхода через UI:
+                                // - 3 секунды на загрузку страницы профиля (в скрипте)
+                                // - 2 секунды ожидания DOM
+                                // - 2 секунды перед кликом "Выход"
+                                // - 2 секунды после клика "Выход"
+                                // - 2 секунды перед кликом "Выйти"
+                                // - 3 секунды после клика "Выйти" (редирект)
+                                // Итого: ~14 секунд + время на загрузку страницы
+                                Logger.logWebView("Waiting for UI logout sequence to complete (up to 20 seconds)...")
+                                kotlinx.coroutines.delay(20000)
                                 Logger.logWebView("UI logout sequence completed, destroying WebView")
                             } catch (e: Exception) {
                                 Logger.logError("Error during UI logout", e)

@@ -7,6 +7,9 @@ import android.webkit.WebViewClient
 import com.metersync.utils.Logger
 
 class WebViewManager(context: Context, private val listener: Listener) {
+    private var isPaused = false
+    private var isSuspended = false
+    
     private val webView: WebView = WebView(context).apply {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -15,24 +18,33 @@ class WebViewManager(context: Context, private val listener: Listener) {
         settings.builtInZoomControls = false
         settings.displayZoomControls = false
         
+        // Оптимизации для снижения энергопотребления
+        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        settings.mediaPlaybackRequiresUserGesture = true
+        settings.blockNetworkImage = false // Оставляем изображения для корректной работы
+        settings.blockNetworkLoads = false
+        
         webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 Logger.logWebView("Page finished loading: $url")
                 super.onPageFinished(view, url)
                 
-                // Inject console.log interceptor for debugging
-                view?.evaluateJavascript("""
-                    (function() {
-                        const originalLog = console.log;
-                        console.log = function(...args) {
-                            originalLog.apply(console, args);
-                            window.Android?.onConsoleLog?.('LOG: ' + args.join(' '));
-                        };
-                    })();
-                """, null)
-                
-                // Notify that page is ready for JavaScript execution
-                listener.onPageReady()
+                // Inject console.log interceptor for debugging только если не приостановлен
+                if (!isSuspended) {
+                    view?.evaluateJavascript("""
+                        (function() {
+                            const originalLog = console.log;
+                            console.log = function(...args) {
+                                originalLog.apply(console, args);
+                                window.Android?.onConsoleLog?.('LOG: ' + args.join(' '));
+                            };
+                        })();
+                    """, null)
+                    
+                    // Notify that page is ready for JavaScript execution
+                    listener.onPageReady()
+                }
             }
             
             override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
@@ -137,6 +149,68 @@ class WebViewManager(context: Context, private val listener: Listener) {
     }
     
     /**
+     * Приостанавливает WebView для снижения энергопотребления.
+     * Останавливает загрузку, отключает JavaScript и загружает пустую страницу.
+     * Используется когда WebView не нужен (пользователь просто просматривает данные).
+     */
+    fun suspend() {
+        if (isSuspended) {
+            Logger.logWebView("WebView already suspended")
+            return
+        }
+        
+        Logger.logWebView("Suspending WebView to reduce power consumption")
+        try {
+            // Останавливаем загрузку
+            webView.stopLoading()
+            
+            // Отключаем JavaScript для экономии энергии
+            webView.settings.javaScriptEnabled = false
+            
+            // Загружаем пустую страницу для освобождения ресурсов
+            webView.loadUrl("about:blank")
+            
+            // Приостанавливаем рендеринг
+            webView.onPause()
+            
+            isSuspended = true
+            Logger.logWebView("WebView suspended successfully")
+        } catch (e: Exception) {
+            Logger.logError("Error suspending WebView", e)
+        }
+    }
+    
+    /**
+     * Возобновляет работу WebView после приостановки.
+     * Включает JavaScript и возобновляет рендеринг.
+     */
+    fun resume() {
+        if (!isSuspended) {
+            Logger.logWebView("WebView is not suspended, no need to resume")
+            return
+        }
+        
+        Logger.logWebView("Resuming WebView")
+        try {
+            // Включаем JavaScript обратно
+            webView.settings.javaScriptEnabled = true
+            
+            // Возобновляем рендеринг
+            webView.onResume()
+            
+            isSuspended = false
+            Logger.logWebView("WebView resumed successfully")
+        } catch (e: Exception) {
+            Logger.logError("Error resuming WebView", e)
+        }
+    }
+    
+    /**
+     * Проверяет, приостановлен ли WebView
+     */
+    fun isSuspended(): Boolean = isSuspended
+    
+    /**
      * Полностью уничтожает WebView и освобождает все ресурсы
      */
     fun destroy() {
@@ -163,6 +237,8 @@ class WebViewManager(context: Context, private val listener: Listener) {
             // Уничтожаем WebView
             webView.destroy()
             
+            isSuspended = false
+            isPaused = false
             Logger.logWebView("WebView destroyed successfully")
         } catch (e: Exception) {
             Logger.logError("Error destroying WebView", e)
@@ -172,6 +248,10 @@ class WebViewManager(context: Context, private val listener: Listener) {
     fun loadUrl(url: String) {
         Logger.logWebView("Loading URL: $url")
         try {
+            // Если WebView приостановлен, возобновляем его перед загрузкой
+            if (isSuspended) {
+                resume()
+            }
             webView.loadUrl(url)
         } catch (e: Exception) {
             Logger.logError("Error loading URL: $url", e)
@@ -181,6 +261,10 @@ class WebViewManager(context: Context, private val listener: Listener) {
         fun evaluateJs(script: String, callback: ((String) -> Unit)? = null) {
             Logger.logWebView("Evaluating JavaScript: ${script.take(200)}...")
             try {
+                // Если WebView приостановлен, возобновляем его перед выполнением JS
+                if (isSuspended) {
+                    resume()
+                }
                 webView.evaluateJavascript(script) { result ->
                     Logger.logWebView("JavaScript result: $result")
                     callback?.invoke(result)
@@ -231,193 +315,219 @@ class WebViewManager(context: Context, private val listener: Listener) {
         fun clearCacheAndReturnToLogin() {
             Logger.logWebView("Starting UI-based logout sequence")
             try {
-                // Выполняем последовательность выхода через UI кнопки
-                webView.evaluateJavascript("""
-                    (async function() {
-                        try {
-                            console.log('=== Starting UI logout sequence ===');
-                            
-                            // Функция ожидания элемента с более надежной проверкой
-                            function waitForElement(selector, timeout = 10000) {
-                                return new Promise((resolve, reject) => {
-                                    const start = Date.now();
-                                    const interval = setInterval(() => {
-                                        const el = document.querySelector(selector);
-                                        if (el && el.offsetParent !== null) { // Проверяем, что элемент видим
-                                            clearInterval(interval);
-                                            resolve(el);
-                                        } else if (Date.now() - start > timeout) {
-                                            clearInterval(interval);
-                                            reject(new Error('Timeout waiting for: ' + selector));
-                                        }
-                                    }, 100);
-                                });
-                            }
-                            
-                            // Функция прокрутки элемента в видимую область
-                            function scrollIntoView(element) {
-                                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                return new Promise(resolve => setTimeout(resolve, 500));
-                            }
-                            
-                            // Проверяем, находимся ли мы на странице входа
-                            const isLoginPage = document.querySelector('input#login') || 
-                                                document.querySelector('input[name="login"]') ||
-                                                document.querySelector('input[type="password"]');
-                            
-                            if (isLoginPage) {
-                                console.log('Already on login page, skipping logout');
-                                localStorage.clear();
-                                sessionStorage.clear();
-                                return 'already_logged_out';
-                            }
-                            
-                            // Шаг 1: Находим и нажимаем кнопку "Профиль"
-                            console.log('Step 1: Looking for Profile button...');
+                // Сначала загружаем страницу профиля
+                Logger.logWebView("Loading profile page: https://meter.printecs.com/profile")
+                loadUrl("https://meter.printecs.com/profile")
+                
+                // Ждем загрузки страницы, затем выполняем скрипт выхода
+                // Используем evaluateJs() вместо прямого вызова, чтобы автоматически возобновить WebView если он приостановлен
+                // Даем время на загрузку страницы профиля перед выполнением скрипта
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    evaluateJs("""
+                        (async function() {
                             try {
-                                // Ищем кнопку "Профиль" по классу и тексту label
-                                const profileBtn = await waitForElement('div._navItem_fugwz_40', 10000);
+                                console.log('=== Starting UI logout sequence ===');
                                 
-                                // Проверяем, что это действительно кнопка "Профиль" по тексту
-                                const label = profileBtn.querySelector('label');
-                                if (label && label.textContent.trim() === 'Профиль') {
-                                    console.log('Profile button found, scrolling into view...');
-                                    await scrollIntoView(profileBtn);
-                                    
-                                    console.log('Clicking Profile button...');
-                                    profileBtn.click();
-                                    
-                                    // Ждем открытия меню профиля
-                                    await new Promise(resolve => setTimeout(resolve, 2000));
-                                    console.log('Profile menu should be open now');
-                                } else {
-                                    throw new Error('Profile button label not found or incorrect');
-                                }
-                            } catch (profileError) {
-                                console.log('Error finding Profile button:', profileError.message);
-                                // Пробуем альтернативный селектор
-                                const altProfileBtn = document.querySelector('div[class*="_navItem"] label');
-                                if (altProfileBtn && altProfileBtn.textContent.includes('Профиль')) {
-                                    const parent = altProfileBtn.closest('div[class*="_navItem"]');
-                                    if (parent) {
-                                        await scrollIntoView(parent);
-                                        parent.click();
-                                        await new Promise(resolve => setTimeout(resolve, 2000));
-                                    }
-                                } else {
-                                    throw profileError;
-                                }
-                            }
-                            
-                            // Шаг 2: Находим и нажимаем кнопку "Выход"
-                            console.log('Step 2: Looking for Logout link...');
-                            try {
-                                const logoutLink = await waitForElement('div._listLink_cwmac_15', 10000);
-                                
-                                // Проверяем, что это действительно "Выход"
-                                if (logoutLink.textContent.trim() === 'Выход') {
-                                    console.log('Logout link found, scrolling into view...');
-                                    await scrollIntoView(logoutLink);
-                                    
-                                    console.log('Clicking Logout link...');
-                                    logoutLink.click();
-                                    
-                                    // Ждем открытия диалога подтверждения
-                                    await new Promise(resolve => setTimeout(resolve, 2000));
-                                    console.log('Logout confirmation dialog should be open now');
-                                } else {
-                                    throw new Error('Logout link text incorrect: ' + logoutLink.textContent);
-                                }
-                            } catch (logoutError) {
-                                console.log('Error finding Logout link:', logoutError.message);
-                                // Пробуем альтернативный селектор
-                                const altLogoutLink = Array.from(document.querySelectorAll('div[class*="_listLink"]'))
-                                    .find(el => el.textContent.trim() === 'Выход');
-                                if (altLogoutLink) {
-                                    await scrollIntoView(altLogoutLink);
-                                    altLogoutLink.click();
-                                    await new Promise(resolve => setTimeout(resolve, 2000));
-                                } else {
-                                    throw logoutError;
-                                }
-                            }
-                            
-                            // Шаг 3: Находим и нажимаем кнопку "Выйти"
-                            console.log('Step 3: Looking for Exit button...');
-                            try {
-                                const exitBtn = await waitForElement('button._button_alwez_1._full_alwez_187', 10000);
-                                
-                                // Проверяем, что это действительно кнопка "Выйти"
-                                const label = exitBtn.querySelector('div._label_alwez_26');
-                                if (label && label.textContent.trim() === 'Выйти') {
-                                    console.log('Exit button found, scrolling into view...');
-                                    await scrollIntoView(exitBtn);
-                                    
-                                    console.log('Clicking Exit button...');
-                                    exitBtn.click();
-                                    
-                                    // Ждем редиректа на страницу входа
-                                    await new Promise(resolve => setTimeout(resolve, 3000));
-                                    console.log('Should be redirected to login page now');
-                                    
-                                    // Проверяем, что мы на странице входа
-                                    const checkLoginPage = document.querySelector('input#login') || 
-                                                          document.querySelector('input[name="login"]') ||
-                                                          document.querySelector('input[type="password"]');
-                                    
-                                    if (checkLoginPage) {
-                                        console.log('Successfully redirected to login page');
-                                    } else {
-                                        console.log('Warning: May not be on login page yet');
-                                    }
-                                } else {
-                                    throw new Error('Exit button label not found or incorrect');
-                                }
-                            } catch (exitError) {
-                                console.log('Error finding Exit button:', exitError.message);
-                                // Пробуем альтернативный селектор
-                                const altExitBtn = Array.from(document.querySelectorAll('button[class*="_button"][class*="_full"]'))
-                                    .find(btn => {
-                                        const label = btn.querySelector('div[class*="_label"]');
-                                        return label && label.textContent.trim() === 'Выйти';
+                                // Функция ожидания элемента с более надежной проверкой
+                                function waitForElement(selector, timeout = 10000) {
+                                    return new Promise((resolve, reject) => {
+                                        const start = Date.now();
+                                        const interval = setInterval(() => {
+                                            const el = document.querySelector(selector);
+                                            if (el && el.offsetParent !== null) { // Проверяем, что элемент видим
+                                                clearInterval(interval);
+                                                resolve(el);
+                                            } else if (Date.now() - start > timeout) {
+                                                clearInterval(interval);
+                                                reject(new Error('Timeout waiting for: ' + selector));
+                                            }
+                                        }, 200);
                                     });
-                                if (altExitBtn) {
-                                    await scrollIntoView(altExitBtn);
-                                    altExitBtn.click();
-                                    await new Promise(resolve => setTimeout(resolve, 3000));
-                                } else {
-                                    throw exitError;
                                 }
-                            }
-                            
-                            console.log('=== UI logout sequence completed successfully ===');
-                            
-                            // Очищаем все данные после выхода
-                            localStorage.clear();
-                            sessionStorage.clear();
-                            console.log('Storage cleared');
-                            
-                            return 'logout_success';
-                            
-                        } catch (error) {
-                            console.log('Error in UI logout sequence:', error.message);
-                            console.log('Stack:', error.stack);
-                            
-                            // Очистка localStorage и sessionStorage в любом случае
-                            try {
+                                
+                                // React-совместимый клик (как в других скриптах)
+                                function reactClick(element) {
+                                    const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+                                    const mouseUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+                                    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+                                    element.dispatchEvent(mouseDown);
+                                    element.dispatchEvent(mouseUp);
+                                    element.dispatchEvent(click);
+                                }
+                                
+                                // Функция прокрутки элемента в видимую область
+                                function scrollIntoView(element) {
+                                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    return new Promise(resolve => setTimeout(resolve, 500));
+                                }
+                                
+                                // Проверяем, находимся ли мы на странице входа
+                                const isLoginPage = document.querySelector('input#login') || 
+                                                    document.querySelector('input[name="login"]') ||
+                                                    document.querySelector('input[type="password"]');
+                                
+                                if (isLoginPage) {
+                                    console.log('Already on login page, skipping logout');
+                                    localStorage.clear();
+                                    sessionStorage.clear();
+                                    return 'already_logged_out';
+                                }
+                                
+                                // КРИТИЧЕСКИ ВАЖНО: Ждем полной загрузки страницы профиля перед поиском элементов
+                                console.log('Waiting for profile page to be fully loaded...');
+                                if (document.readyState !== 'complete') {
+                                    await new Promise(resolve => {
+                                        if (document.readyState === 'complete') {
+                                            resolve();
+                                        } else {
+                                            window.addEventListener('load', resolve, { once: true });
+                                            // Таймаут на случай, если событие load не сработает
+                                            setTimeout(resolve, 3000);
+                                        }
+                                    });
+                                }
+                                
+                                // Дополнительная задержка для полной инициализации React компонентов (минимум 2 секунды)
+                                console.log('Waiting 2 seconds for React components to initialize...');
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                console.log('Page should be fully loaded now');
+                                
+                                // Шаг 1: Находим и нажимаем кнопку "Выход" (div._listLink_cwmac_15)
+                                console.log('Step 1: Looking for Logout button (Выход)...');
+                                try {
+                                    const logoutLink = await waitForElement('div._listLink_cwmac_15', 10000);
+                                    
+                                    // Проверяем, что это действительно "Выход"
+                                    if (logoutLink.textContent.trim() === 'Выход') {
+                                        console.log('Logout button found, scrolling into view...');
+                                        await scrollIntoView(logoutLink);
+                                        
+                                        // Дополнительное ожидание минимум 2 секунды перед кликом
+                                        console.log('Waiting additional 2 seconds before clicking...');
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                        
+                                        console.log('Clicking Logout button using React-compatible click...');
+                                        reactClick(logoutLink);
+                                        
+                                        // Ждем открытия диалога подтверждения
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                        console.log('Logout confirmation dialog should be open now');
+                                    } else {
+                                        throw new Error('Logout button text incorrect: ' + logoutLink.textContent);
+                                    }
+                                } catch (logoutError) {
+                                    console.log('Error finding Logout button:', logoutError.message);
+                                    // Пробуем альтернативный селектор
+                                    const altLogoutLink = Array.from(document.querySelectorAll('div[class*="_listLink"]'))
+                                        .find(el => el.textContent.trim() === 'Выход');
+                                    if (altLogoutLink) {
+                                        await scrollIntoView(altLogoutLink);
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                        reactClick(altLogoutLink);
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                    } else {
+                                        throw logoutError;
+                                    }
+                                }
+                                
+                                // Шаг 2: Находим и нажимаем кнопку "Выйти" (div._label_alwez_26)
+                                console.log('Step 2: Looking for Exit button (Выйти)...');
+                                try {
+                                    // Ищем элемент с классом _label_alwez_26, который содержит текст "Выйти"
+                                    const exitLabel = await waitForElement('div._label_alwez_26', 10000);
+                                    
+                                    // Проверяем, что это действительно "Выйти"
+                                    if (exitLabel.textContent.trim() === 'Выйти') {
+                                        console.log('Exit button found, scrolling into view...');
+                                        await scrollIntoView(exitLabel);
+                                        
+                                        // Дополнительное ожидание минимум 2 секунды перед кликом
+                                        console.log('Waiting additional 2 seconds before clicking...');
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                        
+                                        // Находим родительскую кнопку для клика
+                                        const exitButton = exitLabel.closest('button') || exitLabel.closest('div[class*="_button"]');
+                                        if (exitButton) {
+                                            console.log('Clicking Exit button using React-compatible click...');
+                                            reactClick(exitButton);
+                                        } else {
+                                            // Если не нашли родительскую кнопку, кликаем на сам label
+                                            reactClick(exitLabel);
+                                        }
+                                        
+                                        // Ждем редиректа на страницу входа
+                                        console.log('Waiting for redirect to login page...');
+                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                        
+                                        // Проверяем, что мы на странице входа
+                                        const checkLoginPage = document.querySelector('input#login') || 
+                                                              document.querySelector('input[name="login"]') ||
+                                                              document.querySelector('input[type="password"]');
+                                        
+                                        if (checkLoginPage) {
+                                            console.log('Successfully redirected to login page');
+                                        } else {
+                                            console.log('Warning: May not be on login page yet, waiting additional time...');
+                                            // Дополнительное ожидание и проверка URL
+                                            await new Promise(resolve => setTimeout(resolve, 2000));
+                                            const currentUrl = window.location.href;
+                                            console.log('Current URL:', currentUrl);
+                                            if (currentUrl.includes('meter.printecs.com') && !currentUrl.includes('profile')) {
+                                                console.log('URL indicates we are on login page');
+                                            }
+                                        }
+                                    } else {
+                                        throw new Error('Exit button text incorrect: ' + exitLabel.textContent);
+                                    }
+                                } catch (exitError) {
+                                    console.log('Error finding Exit button:', exitError.message);
+                                    // Пробуем альтернативный селектор
+                                    const altExitLabel = Array.from(document.querySelectorAll('div[class*="_label"]'))
+                                        .find(el => el.textContent.trim() === 'Выйти');
+                                    if (altExitLabel) {
+                                        await scrollIntoView(altExitLabel);
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                        const exitButton = altExitLabel.closest('button') || altExitLabel.closest('div[class*="_button"]');
+                                        if (exitButton) {
+                                            reactClick(exitButton);
+                                        } else {
+                                            reactClick(altExitLabel);
+                                        }
+                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                    } else {
+                                        throw exitError;
+                                    }
+                                }
+                                
+                                console.log('=== UI logout sequence completed successfully ===');
+                                
+                                // Очищаем все данные после выхода
                                 localStorage.clear();
                                 sessionStorage.clear();
-                                console.log('Storage cleared as fallback');
-                            } catch (e) {
-                                console.log('Error clearing storage:', e);
+                                console.log('Storage cleared');
+                                
+                                return 'logout_success';
+                                
+                            } catch (error) {
+                                console.log('Error in UI logout sequence:', error.message);
+                                console.log('Stack:', error.stack);
+                                
+                                // Очистка localStorage и sessionStorage в любом случае
+                                try {
+                                    localStorage.clear();
+                                    sessionStorage.clear();
+                                    console.log('Storage cleared as fallback');
+                                } catch (e) {
+                                    console.log('Error clearing storage:', e);
+                                }
+                                
+                                return 'logout_error: ' + error.message;
                             }
-                            
-                            return 'logout_error: ' + error.message;
-                        }
-                    })();
-                """.trimIndent()) { result ->
-                    Logger.logWebView("Logout sequence result: $result")
-                }
+                        })();
+                    """.trimIndent()) { result ->
+                        Logger.logWebView("Logout sequence result: $result")
+                    }
+                }, 3000) // Даем 3 секунды на загрузку страницы профиля
                 
                 Logger.logWebView("UI logout sequence initiated")
             } catch (e: Exception) {
