@@ -45,6 +45,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
     var password by remember { mutableStateOf("") }
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var enableLogging by remember { mutableStateOf(Logger.isLoggingEnabled()) }
+    var showWebViewDebug by remember { mutableStateOf(false) } // По умолчанию отключен
     
     // Статистика счетчиков
     var totalMeters by remember { mutableStateOf(0) }
@@ -89,6 +90,26 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+        // Чекбокс для показа WebView (для отладки)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = showWebViewDebug,
+                onCheckedChange = { 
+                    showWebViewDebug = it
+                    vm.setShowWebView(it)
+                }
+            )
+            Text(
+                text = "Показать WebView",
+                modifier = Modifier.padding(start = 8.dp),
+                fontSize = 14.sp
+            )
+        }
+        
         // Чекбокс для управления логированием
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -268,12 +289,19 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
             )
         }
         
-        // Диалог с WebView для отладки процесса входа
-        if (showWebView) {
+        // Диалог с WebView для отладки процесса входа (показывается только если включен чекбокс)
+        if (showWebViewDebug && showWebView) {
+            // Синхронизируем состояние с ViewModel при показе диалога
+            LaunchedEffect(showWebViewDebug) {
+                if (showWebViewDebug) {
+                    vm.setShowWebView(true)
+                }
+            }
             val webView = vm.getCurrentWebView()
             
             Dialog(
                 onDismissRequest = { 
+                    showWebViewDebug = false
                     vm.setShowWebView(false)
                 },
                 properties = DialogProperties(
@@ -305,6 +333,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
                             )
                             Button(
                                 onClick = { 
+                                    showWebViewDebug = false
                                     vm.setShowWebView(false)
                                 }
                             ) {
