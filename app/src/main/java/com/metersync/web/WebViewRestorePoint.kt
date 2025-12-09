@@ -83,19 +83,41 @@ class WebViewRestorePoint(private val context: Context) {
             WebViewDatabase.getInstance(context).clearFormData()
             WebViewDatabase.getInstance(context).clearHttpAuthUsernamePassword()
             
-            // Очистка куки
+            // Очистка куки - более агрессивная
             val cookieManager = android.webkit.CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true) // Включаем куки для очистки
             cookieManager.removeAllCookies(null)
             cookieManager.flush()
+            
+            // Дополнительная очистка через CookieManager
+            try {
+                // Очищаем куки для всех доменов
+                cookieManager.removeSessionCookies(null)
+                cookieManager.flush()
+            } catch (e: Exception) {
+                Logger.logError("Error clearing session cookies", e)
+            }
             
             // Очистка кэша приложения
             try {
                 val cacheDir = context.cacheDir
                 if (cacheDir.exists()) {
                     cacheDir.deleteRecursively()
+                    Logger.logWebView("App cache directory deleted")
                 }
             } catch (e: Exception) {
                 Logger.logError("Error clearing app cache", e)
+            }
+            
+            // Очистка кэша WebView через файловую систему
+            try {
+                val webViewCacheDir = context.getDir("webview", Context.MODE_PRIVATE)
+                if (webViewCacheDir.exists()) {
+                    webViewCacheDir.deleteRecursively()
+                    Logger.logWebView("WebView cache directory deleted")
+                }
+            } catch (e: Exception) {
+                Logger.logError("Error clearing WebView cache directory", e)
             }
             
             Logger.logWebView("Complete WebView data cleanup finished")

@@ -150,11 +150,20 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
         _isLoggingOut.value = true // Блокируем кнопку входа
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Clear database
+                // Clear database - синхронно, чтобы убедиться что данные удалены
                 Logger.logDatabase("Clearing all addresses")
+                val addressesBefore = db.addressDao().getAll().first().size
+                Logger.logDatabase("Addresses before deletion: $addressesBefore")
                 db.addressDao().deleteAll()
+                val addressesAfter = db.addressDao().getAll().first().size
+                Logger.logDatabase("Addresses after deletion: $addressesAfter")
+                
                 Logger.logDatabase("Clearing all meters")
+                val metersBefore = db.meterDao().getTotalMetersCount()
+                Logger.logDatabase("Meters before deletion: $metersBefore")
                 db.meterDao().deleteAll()
+                val metersAfter = db.meterDao().getTotalMetersCount()
+                Logger.logDatabase("Meters after deletion: $metersAfter")
 
                 // Clear credentials
                 Logger.log("Clearing saved credentials", "CREDENTIALS")
@@ -164,23 +173,62 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 Logger.logWebView("Restoring WebView to clean state")
                 withContext(Dispatchers.Main) {
                     try {
-                        // Сначала очищаем старый WebViewManager
+                        // Шаг 1: Сначала пытаемся выйти через UI (если WebView еще существует)
+                        // Это важно - нужно завершить сессию на сервере ПЕРЕД уничтожением WebView
                         currentWebViewManager?.let { webViewManager ->
                             try {
+                                Logger.logWebView("Attempting UI logout before destroying WebView")
+                                // Пытаемся выйти через UI - это завершит сессию на сервере
                                 webViewManager.clearCacheAndReturnToLogin()
+                                // Даем время на выполнение выхода через UI (серия кликов и ожиданий)
+                                kotlinx.coroutines.delay(5000)
+                                Logger.logWebView("UI logout sequence completed, destroying WebView")
                             } catch (e: Exception) {
-                                Logger.logError("Error clearing WebView cache", e)
+                                Logger.logError("Error during UI logout", e)
                             }
                         }
-
-                        // Принудительно пересоздаем WebViewManager для полного сброса
-                        Logger.logWebView("Recreating WebViewManager for complete reset")
+                        
+                        // Шаг 2: Теперь уничтожаем WebView
+                        currentWebViewManager?.let { webViewManager ->
+                            try {
+                                Logger.logWebView("Destroying old WebViewManager")
+                                webViewManager.destroy()
+                            } catch (e: Exception) {
+                                Logger.logError("Error destroying WebViewManager", e)
+                            }
+                        }
+                        
+                        // Обнуляем ссылку
                         currentWebViewManager = null
 
-                        // Восстанавливаем WebView к точке восстановления
+                        // Шаг 3: Восстанавливаем WebView к точке восстановления (очищает все данные)
+                        Logger.logWebView("Clearing all WebView data via restore point")
                         webViewRestorePoint.restoreToPoint()
+                        
+                        // Шаг 4: Дополнительная очистка: удаляем все куки глобально
+                        try {
+                            val cookieManager = android.webkit.CookieManager.getInstance()
+                            cookieManager.removeAllCookies(null)
+                            cookieManager.flush()
+                            Logger.logWebView("All cookies cleared globally")
+                        } catch (e: Exception) {
+                            Logger.logError("Error clearing cookies", e)
+                        }
+                        
+                        // Небольшая задержка для завершения очистки
+                        kotlinx.coroutines.delay(1000)
+                        
+                        // Шаг 5: Создаем новый WebViewManager с чистым состоянием
+                        Logger.logWebView("Creating new WebViewManager with clean state")
+                        val newWebViewManager = WebViewManager(context, this@MeterViewModel)
+                        currentWebViewManager = newWebViewManager
+                        
+                        // Шаг 6: Загружаем страницу входа с timestamp для новой сессии
+                        val loginUrl = "https://meter.printecs.com/?_t=${System.currentTimeMillis()}"
+                        Logger.logWebView("Loading login page: $loginUrl")
+                        newWebViewManager.loadUrl(loginUrl)
 
-                        Logger.logWebView("WebView restored to clean state successfully")
+                        Logger.logWebView("WebView restored to clean state and login page loaded successfully")
                     } catch (e: Exception) {
                         Logger.logError("Error recreating WebViewManager", e)
                     }
@@ -243,8 +291,10 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                     pendingLoginScript = loginScript
                     pendingAddressScript = addressScript
 
-                    Logger.logWebView("Loading URL: https://meter.printecs.com/")
-                    webViewManager.loadUrl("https://meter.printecs.com/")
+                    // Загружаем страницу входа с timestamp для создания новой сессии
+                    val loginUrl = "https://meter.printecs.com/?_t=${System.currentTimeMillis()}"
+                    Logger.logWebView("Loading URL: $loginUrl")
+                    webViewManager.loadUrl(loginUrl)
 
                     Logger.log("WebView created and URL loading started", "MAIN")
                 }
