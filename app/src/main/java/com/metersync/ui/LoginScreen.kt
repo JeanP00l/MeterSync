@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -40,7 +41,11 @@ import com.metersync.utils.Logger
 import com.metersync.viewmodel.MeterViewModel
 
 @Composable
-fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
+fun LoginScreen(
+    onLoginSuccess: () -> Unit,
+    onNavigateToPhotoSync: () -> Unit = {},
+    vm: MeterViewModel = viewModel()
+) {
     var login by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showClearCacheDialog by remember { mutableStateOf(false) }
@@ -190,6 +195,20 @@ fun LoginScreen(onLoginSuccess: () -> Unit, vm: MeterViewModel = viewModel()) {
                     enabled = !loading && !isLoggingOut
                 ) {
                     Text("Удалить кэш")
+                }
+                
+                Button(
+                    onClick = {
+                        Logger.logUI("Sync photos button clicked")
+                        onNavigateToPhotoSync()
+                    },
+                    modifier = Modifier.padding(top = 8.dp),
+                    enabled = !loading && !isLoggingOut,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF9C27B0)
+                    )
+                ) {
+                    Text("📱 Синхронизировать фото")
                 }
             }
 

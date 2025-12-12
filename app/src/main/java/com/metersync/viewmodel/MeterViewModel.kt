@@ -745,14 +745,57 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                 // Пробуем разные стратегии поиска с более точным сопоставлением
                 val result = sortedAddresses.find { address ->
                     // Стратегия 1: точное совпадение начала с учетом границ слов
-                    val matches = apartment.startsWith(address.fullAddress) && 
-                    (apartment.length == address.fullAddress.length || 
-                     apartment[address.fullAddress.length] == ',' ||
-                     apartment[address.fullAddress.length] == ' ')
-                    if (matches) {
-                        Logger.logDatabase("Strategy 1 match: apartment='$apartment' -> address='${address.fullAddress}'")
+                    // Важно: проверяем, что нет более длинного адреса, который тоже подходит
+                    if (!apartment.startsWith(address.fullAddress)) {
+                        return@find false
                     }
-                    matches
+                    
+                    val nextCharIndex = address.fullAddress.length
+                    if (apartment.length == nextCharIndex) {
+                        // Точное совпадение
+                        val hasLongerMatch = sortedAddresses.any { other -> 
+                            other != address && 
+                            other.fullAddress.length > address.fullAddress.length &&
+                            other.fullAddress.startsWith(address.fullAddress) &&
+                            apartment.startsWith(other.fullAddress)
+                        }
+                        if (!hasLongerMatch) {
+                            Logger.logDatabase("Strategy 1 exact match: apartment='$apartment' -> address='${address.fullAddress}'")
+                            return@find true
+                        }
+                    } else if (nextCharIndex < apartment.length) {
+                        val nextChar = apartment[nextCharIndex]
+                        // Проверяем, что после адреса идет разделитель (запятая, пробел, слэш, буква корпуса)
+                        val isSeparator = nextChar == ',' || 
+                                         nextChar == ' ' ||
+                                         nextChar == '/' ||
+                                         nextChar == 'к' ||
+                                         nextChar == 'К' ||
+                                         (nextChar.isLetter() && nextChar.isLowerCase())
+                        
+                        if (isSeparator) {
+                            // Критически важно: проверяем, что нет более длинного адреса, который тоже начинается с этого
+                            val hasLongerMatch = sortedAddresses.any { other -> 
+                                other != address && 
+                                other.fullAddress.length > address.fullAddress.length &&
+                                other.fullAddress.startsWith(address.fullAddress) &&
+                                apartment.startsWith(other.fullAddress) &&
+                                other.fullAddress.length < apartment.length &&
+                                (apartment[other.fullAddress.length] == ',' ||
+                                 apartment[other.fullAddress.length] == ' ' ||
+                                 apartment[other.fullAddress.length] == '/' ||
+                                 apartment[other.fullAddress.length] == 'к' ||
+                                 apartment[other.fullAddress.length] == 'К' ||
+                                 (apartment[other.fullAddress.length].isLetter() && apartment[other.fullAddress.length].isLowerCase()))
+                            }
+                            
+                            if (!hasLongerMatch) {
+                                Logger.logDatabase("Strategy 1 match: apartment='$apartment' -> address='${address.fullAddress}'")
+                                return@find true
+                            }
+                        }
+                    }
+                    false
                 }?.id ?: sortedAddresses.find { address ->
                     // Стратегия 2: содержит адрес, но не является подстрокой другого адреса
                     val matches = apartment.contains(address.fullAddress) && 
@@ -1277,17 +1320,66 @@ class MeterViewModel(app: Application) : AndroidViewModel(app), WebViewManager.L
                         await new Promise(resolve => setTimeout(resolve, 200)); // Уменьшено с 300ms до 200ms
 
                         // Находим адрес в списке и кликаем по нему
+                        // Сначала собираем все адреса с их элементами для более точного поиска
                         const addressItems = document.querySelectorAll('div._taskItem_36r29_38');
-                        let targetItem = null;
-
+                        const addressList = [];
+                        
                         for (let item of addressItems) {
                             const titleElement = item.querySelector('div._taskTitle_36r29_45 span');
                             if (titleElement) {
                                 const text = titleElement.innerText.trim();
-                                // Используем более гибкий поиск (в обе стороны)
-                                if (text.includes(TARGET_ADDRESS) || TARGET_ADDRESS.includes(text)) {
-                                    targetItem = item;
-                                    break;
+                                addressList.push({ text: text, element: item });
+                            }
+                        }
+                        
+                        let targetItem = null;
+                        
+                        // Сначала ищем точное совпадение
+                        for (let addr of addressList) {
+                            if (addr.text === TARGET_ADDRESS) {
+                                targetItem = addr.element;
+                                break;
+                            }
+                        }
+                        
+                        // Если точного совпадения нет, ищем по началу адреса
+                        // Сортируем адреса по длине (от длинных к коротким) для приоритета более точных совпадений
+                        if (!targetItem) {
+                            addressList.sort((a, b) => b.text.length - a.text.length);
+                            
+                            for (let addr of addressList) {
+                                // Проверяем, что текст адреса начинается с целевого адреса
+                                if (addr.text.startsWith(TARGET_ADDRESS)) {
+                                // Проверяем, что после целевого адреса идет разделитель (запятая, пробел, слэш, буква корпуса)
+                                const nextChar = addr.text[TARGET_ADDRESS.length];
+                                const isLetter = nextChar && /[а-яА-Яa-zA-Z]/.test(nextChar);
+                                if (addr.text.length === TARGET_ADDRESS.length || 
+                                    nextChar === ',' || 
+                                    nextChar === ' ' ||
+                                    nextChar === '/' ||
+                                    nextChar === 'к' ||
+                                    nextChar === 'К' ||
+                                    isLetter) {
+                                        // Важно: проверяем, что нет более длинного адреса, который тоже начинается с целевого
+                                        const hasLongerMatch = addressList.some(other => {
+                                            if (other === addr || other.text.length <= addr.text.length) return false;
+                                            if (!other.text.startsWith(TARGET_ADDRESS)) return false;
+                                            const otherNextChar = other.text[TARGET_ADDRESS.length];
+                                            const otherIsLetter = otherNextChar && /[а-яА-Яa-zA-Z]/.test(otherNextChar);
+                                            return other.text.length === TARGET_ADDRESS.length || 
+                                                   otherNextChar === ',' || 
+                                                   otherNextChar === ' ' ||
+                                                   otherNextChar === '/' ||
+                                                   otherNextChar === 'к' ||
+                                                   otherNextChar === 'К' ||
+                                                   otherIsLetter;
+                                        });
+                                        
+                                        if (!hasLongerMatch) {
+                                            targetItem = addr.element;
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -17,7 +17,9 @@ import androidx.compose.ui.Modifier
 import com.metersync.ui.getColorScheme
 import com.metersync.ui.ThemeManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.delay
+import androidx.core.view.WindowCompat
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -28,7 +30,9 @@ import com.metersync.ui.AddressDetailScreen
 import com.metersync.ui.AddressListScreen
 import com.metersync.ui.LoginScreen
 import com.metersync.ui.MainScreen
+import com.metersync.ui.UpdateDialog
 import com.metersync.utils.Logger
+import com.metersync.utils.VersionChecker
 import com.metersync.permissions.PermissionManager
 import com.metersync.camera.CameraManager
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import android.net.Uri
 import android.app.Activity
+import android.content.pm.PackageManager
 
 class MainActivity : ComponentActivity() {
     
@@ -47,17 +52,32 @@ class MainActivity : ComponentActivity() {
             Logger.log("Camera photo taken successfully", "CAMERA")
             // Обрабатываем результат камеры
             currentTempUri?.let { uri ->
-                currentMeterInfo?.let { meterInfo ->
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val watermarkedUri = cameraManager.addWatermarkToImage(uri, meterInfo)
-                            if (watermarkedUri != null) {
-                                Logger.log("Photo saved with watermark: $meterInfo", "CAMERA")
-                            } else {
-                                Logger.log("Failed to save photo with watermark", "CAMERA")
+                currentTempFile?.let { tempFile ->
+                    currentCounterAddress?.let { counterAddress ->
+                        currentCounterNumber?.let { counterNumber ->
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
+                                    val watermarkedUri = cameraManager.addWatermarkToImage(
+                                        uri, 
+                                        counterAddress, 
+                                        counterNumber, 
+                                        tempFile
+                                    )
+                                    if (watermarkedUri != null) {
+                                        Logger.log("Photo saved with watermark and EXIF: address='$counterAddress', number='$counterNumber'", "CAMERA")
+                                    } else {
+                                        Logger.log("Failed to save photo with watermark", "CAMERA")
+                                    }
+                                } catch (e: Exception) {
+                                    Logger.logError("Error processing camera result", e)
+                                } finally {
+                                    // Очищаем переменные после обработки
+                                    currentTempUri = null
+                                    currentTempFile = null
+                                    currentCounterAddress = null
+                                    currentCounterNumber = null
+                                }
                             }
-                        } catch (e: Exception) {
-                            Logger.logError("Error processing camera result", e)
                         }
                     }
                 }
@@ -66,7 +86,9 @@ class MainActivity : ComponentActivity() {
             Logger.log("Camera photo cancelled", "CAMERA")
             // Очищаем переменные при отмене
             currentTempUri = null
-            currentMeterInfo = null
+            currentTempFile = null
+            currentCounterAddress = null
+            currentCounterNumber = null
         }
     }
     
@@ -78,7 +100,9 @@ class MainActivity : ComponentActivity() {
     
     // Переменные для обработки результата камеры
     private var currentTempUri: Uri? = null
-    private var currentMeterInfo: String? = null
+    private var currentTempFile: java.io.File? = null
+    private var currentCounterAddress: String? = null
+    private var currentCounterNumber: String? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,6 +153,64 @@ class MainActivity : ComponentActivity() {
             }
             
             val colorScheme = getColorScheme(isDarkTheme)
+            val view = LocalView.current
+            
+            // Настраиваем системную панель статуса в зависимости от темы
+            LaunchedEffect(isDarkTheme) {
+                val window = (view.context as? Activity)?.window
+                window?.let {
+                    WindowCompat.setDecorFitsSystemWindows(it, false)
+                    it.statusBarColor = android.graphics.Color.TRANSPARENT
+                    // Устанавливаем цвет иконок статус-бара: светлые для темной темы, темные для светлой
+                    val insetsController = WindowCompat.getInsetsController(it, view)
+                    insetsController.isAppearanceLightStatusBars = !isDarkTheme
+                }
+            }
+            
+            // Проверка версии приложения
+            var showUpdateDialog by remember { mutableStateOf(false) }
+            var latestVersion by remember { mutableStateOf<String?>(null) }
+            var currentVersion by remember { mutableStateOf("") }
+            
+            // Получаем текущую версию приложения
+            LaunchedEffect(Unit) {
+                try {
+                    val packageInfo = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+                    } else {
+                        @Suppress("DEPRECATION")
+                        context.packageManager.getPackageInfo(context.packageName, 0)
+                    }
+                    currentVersion = packageInfo.versionName ?: "0.0.0"
+                    Logger.log("Current app version: $currentVersion", "VERSION_CHECK")
+                } catch (e: Exception) {
+                    Logger.logError("Error getting app version", e)
+                    currentVersion = "0.0.0"
+                }
+            }
+            
+            // Проверяем версию при запуске, если есть интернет
+            LaunchedEffect(Unit) {
+                if (VersionChecker.isNetworkAvailable(context)) {
+                    delay(1000) // Небольшая задержка, чтобы не мешать запуску приложения
+                    try {
+                        val latest = VersionChecker.getLatestVersion()
+                        if (latest != null) {
+                            latestVersion = latest
+                            if (VersionChecker.isUpdateAvailable(currentVersion, latest)) {
+                                Logger.log("Update available: $currentVersion -> $latest", "VERSION_CHECK")
+                                showUpdateDialog = true
+                            } else {
+                                Logger.log("App is up to date: $currentVersion", "VERSION_CHECK")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Logger.logError("Error checking for updates", e)
+                    }
+                } else {
+                    Logger.log("No internet connection, skipping version check", "VERSION_CHECK")
+                }
+            }
             
             // Используем ключ для перекомпозиции при изменении темы
             androidx.compose.runtime.key(isDarkTheme) {
@@ -142,11 +224,22 @@ class MainActivity : ComponentActivity() {
                             MainScreen(
                                 navController = navController, 
                                 cameraLauncher = cameraLauncher,
-                                onCameraDataReady = { uri, meterInfo ->
+                                onCameraDataReady = { uri, counterAddress, counterNumber, tempFile ->
                                     currentTempUri = uri
-                                    currentMeterInfo = meterInfo
+                                    currentTempFile = tempFile
+                                    currentCounterAddress = counterAddress
+                                    currentCounterNumber = counterNumber
                                 }
                             )
+                            
+                            // Диалог обновления
+                            if (showUpdateDialog && latestVersion != null) {
+                                UpdateDialog(
+                                    currentVersion = currentVersion,
+                                    latestVersion = latestVersion!!,
+                                    onDismiss = { showUpdateDialog = false }
+                                )
+                            }
                         }
                     }
                 )

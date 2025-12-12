@@ -65,7 +65,7 @@ fun AddressDetailScreen(
     addressId: Long, 
     onBack: () -> Unit, 
     cameraLauncher: androidx.activity.result.ActivityResultLauncher<Intent>?,
-    onCameraDataReady: (Uri, String, java.io.File) -> Unit,
+    onCameraDataReady: (Uri, String, String, java.io.File) -> Unit,
     vm: MeterViewModel = viewModel()
 ) {
     val addresses = vm.addresses.collectAsState(initial = emptyList())
@@ -262,10 +262,12 @@ fun AddressDetailScreen(
                                     if (checkCameraPermissions()) {
                                         // Создаем временный URI для изображения
                                         val (tempUri, tempFile) = cameraManager.createTempImageUri()
-                                        val meterInfo = "${meter.apartment}      №${meter.meterNumber}"
                                         
-                                        // Передаем данные в MainActivity (URI и путь к файлу)
-                                        onCameraDataReady(tempUri, meterInfo, tempFile)
+                                        // Получаем полный адрес для передачи в EXIF метаданные
+                                        val fullAddress = currentAddress?.fullAddress ?: meter.apartment
+                                        
+                                        // Передаем данные в MainActivity (URI, адрес, номер счетчика и путь к файлу)
+                                        onCameraDataReady(tempUri, fullAddress, meter.meterNumber, tempFile)
                                         
                                         // Создаем Intent для камеры
                                         val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {

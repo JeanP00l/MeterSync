@@ -37,19 +37,67 @@
             // Минимальная задержка для инициализации React
             await new Promise(resolve => setTimeout(resolve, 200)); // Уменьшено с 300ms до 200ms
 
-            // Находим адрес в списке (используем includes вместо точного сравнения)
+            // Находим адрес в списке с приоритетом более точных совпадений
             const items = document.querySelectorAll('div._taskItem_36r29_38');
-            let targetItem = null;
-
+            const addressList = [];
+            
             for (let item of items) {
                 const span = item.querySelector('div._taskTitle_36r29_45 > span') ||
                            item.querySelector('div._taskTitle_36r29_45 span');
                 if (span) {
                     const text = span.innerText.trim();
-                    // Используем includes для более гибкого поиска
-                    if (text.includes(TARGET_ADDRESS) || TARGET_ADDRESS.includes(text)) {
-                        targetItem = item;
-                        break;
+                    addressList.push({ text: text, element: item });
+                }
+            }
+            
+            let targetItem = null;
+            
+            // Сначала ищем точное совпадение
+            for (let addr of addressList) {
+                if (addr.text === TARGET_ADDRESS) {
+                    targetItem = addr.element;
+                    break;
+                }
+            }
+            
+            // Если точного совпадения нет, ищем по началу адреса
+            // Сортируем адреса по длине (от длинных к коротким) для приоритета более точных совпадений
+            if (!targetItem) {
+                addressList.sort((a, b) => b.text.length - a.text.length);
+                
+                for (let addr of addressList) {
+                    // Проверяем, что текст адреса начинается с целевого адреса
+                    if (addr.text.startsWith(TARGET_ADDRESS)) {
+                        // Проверяем, что после целевого адреса идет разделитель (запятая, пробел, слэш, буква корпуса)
+                        const nextChar = addr.text[TARGET_ADDRESS.length];
+                        const isLetter = nextChar && /[а-яА-Яa-zA-Z]/.test(nextChar);
+                        if (addr.text.length === TARGET_ADDRESS.length || 
+                            nextChar === ',' || 
+                            nextChar === ' ' ||
+                            nextChar === '/' ||
+                            nextChar === 'к' ||
+                            nextChar === 'К' ||
+                            isLetter) {
+                            // Важно: проверяем, что нет более длинного адреса, который тоже начинается с целевого
+                            const hasLongerMatch = addressList.some(other => {
+                                if (other === addr || other.text.length <= addr.text.length) return false;
+                                if (!other.text.startsWith(TARGET_ADDRESS)) return false;
+                                const otherNextChar = other.text[TARGET_ADDRESS.length];
+                                const otherIsLetter = otherNextChar && /[а-яА-Яa-zA-Z]/.test(otherNextChar);
+                                return other.text.length === TARGET_ADDRESS.length || 
+                                       otherNextChar === ',' || 
+                                       otherNextChar === ' ' ||
+                                       otherNextChar === '/' ||
+                                       otherNextChar === 'к' ||
+                                       otherNextChar === 'К' ||
+                                       otherIsLetter;
+                            });
+                            
+                            if (!hasLongerMatch) {
+                                targetItem = addr.element;
+                                break;
+                            }
+                        }
                     }
                 }
             }

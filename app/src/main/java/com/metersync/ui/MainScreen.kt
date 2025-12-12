@@ -27,7 +27,7 @@ import android.content.Intent
 fun MainScreen(
     navController: NavHostController,
     cameraLauncher: androidx.activity.result.ActivityResultLauncher<Intent>?,
-    onCameraDataReady: (Uri, String) -> Unit
+    onCameraDataReady: (Uri, String, String, java.io.File) -> Unit
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -75,10 +75,16 @@ fun MainScreen(
         ) {
             composable("login") {
                 Logger.logUI("Composing login screen")
-                LoginScreen(onLoginSuccess = {
-                    Logger.logUI("Login success, staying on login tab")
-                    // Don't navigate automatically, let user switch tabs manually
-                })
+                LoginScreen(
+                    onLoginSuccess = {
+                        Logger.logUI("Login success, staying on login tab")
+                        // Don't navigate automatically, let user switch tabs manually
+                    },
+                    onNavigateToPhotoSync = {
+                        Logger.logUI("Navigating to photo sync")
+                        navController.navigate("photo_sync")
+                    }
+                )
             }
             composable("list") {
                 Logger.logUI("Composing address list screen")
@@ -102,6 +108,13 @@ fun MainScreen(
                     cameraLauncher = cameraLauncher,
                     onCameraDataReady = onCameraDataReady
                 )
+            }
+            composable("photo_sync") {
+                Logger.logUI("Composing photo sync screen")
+                PhotoSyncScreen(onBack = {
+                    Logger.logUI("Photo sync back button pressed")
+                    navController.popBackStack()
+                })
             }
         }
     }

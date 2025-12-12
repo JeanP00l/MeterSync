@@ -181,7 +181,9 @@ fun AddressItem(address: String, addressId: Long, onClick: () -> Unit, vm: Meter
             .fillMaxWidth()
             .clickable { onClick() },
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        )
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -195,14 +197,14 @@ fun AddressItem(address: String, addressId: Long, onClick: () -> Unit, vm: Meter
                     text = address,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color.Black,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
                     text = "Счетчиков: ${meters.value.size}",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Normal,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             
@@ -212,7 +214,7 @@ fun AddressItem(address: String, addressId: Long, onClick: () -> Unit, vm: Meter
                     text = "${addressStats.checkedCount}/${addressStats.totalCount} (${addressStats.percentage}%)",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Normal,
-                    color = Color.Gray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
@@ -221,7 +223,7 @@ fun AddressItem(address: String, addressId: Long, onClick: () -> Unit, vm: Meter
     
     // Разделитель между элементами
     HorizontalDivider(
-        color = Color.Gray.copy(alpha = 0.3f),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
         thickness = 1.dp,
         modifier = Modifier.padding(horizontal = 8.dp)
     )
@@ -246,7 +248,9 @@ fun SearchResultItem(address: Address, searchQuery: String, onOpenAddress: (Long
                 .fillMaxWidth()
                 .clickable { onOpenAddress(address.id) },
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+            )
         ) {
             Column(
                 modifier = Modifier.padding(16.dp)
@@ -256,13 +260,13 @@ fun SearchResultItem(address: Address, searchQuery: String, onOpenAddress: (Long
                         text = "📍 ${address.fullAddress}",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color.Black
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = "Адрес",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Normal,
-                        color = Color.Gray,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -279,7 +283,7 @@ fun SearchResultItem(address: Address, searchQuery: String, onOpenAddress: (Long
                         text = "🔍 ${meter.apartment}",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color.Black,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(top = if (addressMatches) 8.dp else 0.dp)
                     )
                     Text(
@@ -294,7 +298,7 @@ fun SearchResultItem(address: Address, searchQuery: String, onOpenAddress: (Long
                             text = "Адрес: ${address.fullAddress}",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Normal,
-                            color = Color.Gray,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp)
                         )
                     }
@@ -304,7 +308,7 @@ fun SearchResultItem(address: Address, searchQuery: String, onOpenAddress: (Long
         
         // Разделитель между элементами
         HorizontalDivider(
-            color = Color.Gray.copy(alpha = 0.3f),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
             thickness = 1.dp,
             modifier = Modifier.padding(horizontal = 8.dp)
         )
